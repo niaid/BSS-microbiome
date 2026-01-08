@@ -12,5 +12,8 @@ This python script works to merge all AMRs from WGSA2 outputs and their abundanc
 
 To run the script, use the following code if your working directory is the WGSA2 output folder (i.e. PipelineResultXXXXXXXXX).
 
+```
 python3 AMR_merge_table.py ./asmbMetaSpades
+```
+
 If there are multiple WGSA2 runs, copy all into one directory and include the path that directory.
