@@ -1,0 +1,582 @@
+---
+title: "The gut microbiome after BSS dosing."
+author: "Lauren Krausfeldt"
+date: "2026-January-9"
+output:
+  html_document:
+    code_folding: hide
+    keep_md: yes
+    toc: true
+    toc_float: true
+    toc_depth: 6
+    theme: spacelab
+  pdf_document: default
+---
+
+```{=html}
+<style>
+body, p {
+  font-family: Arial;
+  text-align: justify;
+  font-size: 12pt;
+}
+</style>
+```
+```{=html}
+<style>
+caption {
+      color: black;
+      font-weight: bold;
+      text-align: justify;
+    }
+</style>
+```
+
+# Eukaryotes
+
+## 1. Methods
+
+Data was evaluated with fastqc and determined to have nextera transposase adapter contamination. Data was run through Nephele's QC pipeline for adapter trimming. Trimmed data was passed through WGSA2 pipeline in Nephele where it was decontaminated for human reads. Eukaryotes were pulled from the Kraken results. Read abundances were transformed to relative abundances for eukaryotes due to the low number detected. 
+
+```{r message=FALSE, warning=FALSE, results='hide'}
+
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(stringr)
+library(phyloseq)
+library(metagMisc)
+library(vegan)
+library(tidyverse)
+library(ggpubr)
+library(ggpubr)
+library(rstatix)
+library(knitr)
+library(GUniFrac)
+library(ggrepel)
+library(MMUPHin)
+library(ggprism)
+library(ggbreak)
+library(microbial)
+library(devtools)
+library(pairwiseAdonis)
+library(RColorBrewer)
+library(scales)
+library(ggtext)
+library(ggtext)
+library(veganEx)
+library(kableExtra)
+library(pixiedust)
+library(downloadthis)
+```
+
+## 2. Data processing 
+
+### Import data
+
+Examine raw data and make phyloseq object. 
+
+
+```{r warning=FALSE, message=FALSE}
+
+data<-read.csv("Tax_euks.csv", row.names=1, header=TRUE)
+
+
+taxa <- data[, c("kingdom","phylum","class","order","family","genus","species","OTU")]
+data[, c("kingdom","phylum","class","order","family","genus","species","OTU","ATCCMSA2002control_P1","ATCCMSA2002control_P2","NegativeControl","NegativeControl_P2")] <- NULL 
+
+```
+
+```{r warning=FALSE, message=FALSE}
+metadata<-read.csv("BSS_metadata update10FEB2025.csv", row.names=1, header=TRUE)
+metadata<-as.data.frame(t(metadata))
+metadata[, c("ATCCMSA2002control_P1","ATCCMSA2002control_P2","NegativeControl","NegativeControl_P2")] <- NULL
+metadata<-as.data.frame(t(metadata))
+
+metadata$Age<-as.numeric(metadata$Age)
+metadata$Day.of.sample.relative.to.BSS.administration<-as.numeric(metadata$Day.of.sample.relative.to.BSS.administration)
+metadata$Day<-as.numeric(metadata$Day)
+metadata$Calculated.BMI<-as.numeric(metadata$Calculated.BMI)
+metadata$Days_colonoscopy_bl<-as.numeric(metadata$Days_colonoscopy_bl)
+metadata$Days_colonoscopy_day0<-as.numeric(metadata$Days_colonoscopy_day0)
+
+
+otu<-otu_table(data, taxa_are_rows=TRUE)
+meta<-sample_data(metadata)
+tax<-tax_table(as.matrix(taxa))
+phylo_raw<-phyloseq(otu, meta, tax)
+phylo_raw_df<-phyloseq_to_df(phylo_raw, addtax=F)
+rownames(phylo_raw_df)<-phylo_raw_df[,1]
+phylo_raw_df<-dplyr::select(phylo_raw_df, -c("OTU"))
+metadata<-data.frame(sample_data(phylo_raw))
+phylo_raw_df<-as.data.frame(t(phylo_raw_df))
+#pairwise.adonis2(phylo_raw_df~SequenceRun, data=metadata)
+
+
+hist(log10(taxa_sums(phylo_raw)))
+
+```
+
+### Filtering
+
+Filtered for prevalence (10%) and abundance (count of 10) instead of critical value to increase number of taxa analyzed. Both must be true to pass filter. 
+
+```{r}
+
+
+#critical_value <- 0.00001*sum(taxa_sums(phylo_raw))
+#phylo <- filter_taxa(phylo_raw, function(x) sum(x) > critical_value, TRUE)
+#phylo
+
+phylo<-phyloseq_filter_prevalence(phylo_raw, abund.trh= 3, prev.trh=0.25, abund.type="total", threshold_condition ="AND")
+phylo
+
+
+```
+
+<br>
+
+> **Notes:**: Filtering helped distribution bias of taxa. 
+
+<br><br>
+
+### Rarefaction curve
+
+Evaluating the number of reads to rarefy to to normalization for differences in sequencing depth. 
+
+```{r results=FALSE, message=FALSE, cache=TRUE, warning=FALSE}
+
+
+summary(sample_sums(phylo))
+
+phylo_df<-phyloseq_to_df(phylo, addtax=F)
+rownames(phylo_df)<-phylo_df[,1]
+phylo_df<-dplyr::select(phylo_df, -c("OTU"))
+
+```
+
+
+```{r warning=FALSE, message=FALSE}
+
+library(ampvis2) 
+metadata<-read.csv("BSS_metadata update10FEB2025.csv")
+#phylo_df<-as.data.frame(t(phylo_df))
+y<-amp_load(phylo_df, metadata, taxa)
+
+rarecurve<-amp_rarecurve(
+  y,
+  stepsize = 1000,
+  color_by = NULL,
+  facet_by = "Timepoint",
+  facet_scales = "free_x"
+)
+rarecurve
+
+
+
+
+```
+
+<br>
+
+> **Notes:**: Low diversity of eukaryotes sequenced. Going with relative abundance for these normalized. 
+
+<br><br>
+
+### Calculating alpha diversity
+
+```{r}
+
+
+## calculate alpha diversity
+
+
+phy_alphadiv <- estimate_richness(phylo)
+otu_table <- otu_table(t(phylo))
+evenness<- diversity(otu_table)/log(specnumber(otu_table))
+chao1 <- t(estimateR(otu_table))[,2]
+all_alphadivs <- data.frame(phy_alphadiv, evenness, chao1)
+update_sample_data <- merge(sample_data(phylo), all_alphadivs, by=0)
+rownames(update_sample_data) <- update_sample_data$Row.names
+update_sample_data$Row.names <- NULL
+sample_data(phylo) <- update_sample_data
+metadata<-update_sample_data
+
+```
+
+```{r}
+
+all_alphadivs %>% kable(caption="<center><strong>Table X. Alpha diversity.<center><strong>") %>% kable_styling() %>% 
+  scroll_box(width = "750px", height="650px", fixed_thead=T)
+
+```
+
+<br>
+
+----------
+
+<br><br>
+
+## 3. Beta diversity 
+
+Examined differences between time point (Baseline, Day 0, Day 2, Day 8, Day 14, Day 28) using permutational multivariate analysis of variance (PERMANOVA).
+
+### 3.1 Permanova 
+
+
+```{r}
+
+phylo_df<-as.data.frame(t(phylo_df))
+bray<-pairwise.adonis2(phylo_df~Timepoint, data=metadata)
+
+results_df <- do.call(rbind, bray)
+results_df <- results_df[grepl("Model", rownames(results_df)), ]
+results_df$Comparison<-rownames(results_df)
+results_df<- results_df %>% mutate(Comparison = gsub(".Model", "", Comparison))
+rownames(results_df)<-results_df$Comparison
+
+results_df<-results_df %>% mutate_at(1:5, as.numeric)
+results_df[c(1:5)] <- lapply(results_df[c(1:5)], round, digits = 3)
+
+results_df[,c(1,2,6)]<-NULL
+results_df %>% kable(caption="<strong>Table X. Differences in eukaryote composition using Bray-Curtis Dissimilarity.<strong>", format="html", full_width = FALSE, table.attr= "style='width:80%;'") %>% kable_styling(position="left", bootstrap_options = c("striped"))%>%
+   column_spec(4, color=ifelse(results_df[,3] < 0.05, "green","black"))
+
+
+```
+
+```{r}
+library(downloadthis)
+results_df %>%
+  download_this(
+    output_name = "PERMANOVA-results-euks-bray",
+    output_extension = ".xlsx",
+    button_label = "Download results excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+
+```
+
+<br><br><br>
+
+
+```{r}
+
+canberra<-pairwise.adonis2(phylo_df~Timepoint, data=metadata, method="canberra")
+results_df <- do.call(rbind, canberra)
+results_df <- results_df[grepl("Model", rownames(results_df)), ]
+results_df$Comparison<-rownames(results_df)
+results_df<- results_df %>% mutate(Comparison = gsub(".Model", "", Comparison))
+rownames(results_df)<-results_df$Comparison
+
+results_df<-results_df %>% mutate_at(1:5, as.numeric)
+results_df[c(1:5)] <- lapply(results_df[c(1:5)], round, digits = 3)
+
+results_df[,c(1,2,6)]<-NULL
+results_df %>% kable(caption="<strong>Table X. Differences in eukaryote composition using Canberra distance.<strong>", format="html", full_width = FALSE, table.attr= "style='width:80%;'") %>% kable_styling(position="left", bootstrap_options = c("striped"))%>%
+   column_spec(4, color=ifelse(results_df[,3] < 0.05, "green","black"))
+
+```
+
+```{r}
+library(downloadthis)
+results_df %>%
+  download_this(
+    output_name = "PERMANOVA-results-euks-canberra",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+
+```
+
+<br>
+
+> **Notes:**: Differences in composition between day2 and baseline, day0, day8, day14, with BrayCurtis dissimilarity and jaccard, all time points with canberra distance. 
+
+<br><br>
+
+
+-----
+
+### 3.2 PCoA
+
+```{r fig.cap="**Figure X. PCoA depicting relationships between samples based on eukaryotic species using Bray-Curtis Dissimilarity.**"}
+
+ord_filt_subject<- ordinate(phylo, "MDS", "bray")  
+all_pcoa_subject1 <- plot_ordination(phylo, ord_filt_subject, type = "site", 
+                                   color = "Timepoint") + 
+  geom_point(size = 4) + theme_bw()+ scale_colour_brewer(type="qual", palette="Paired") +stat_ellipse(level=0.95)+
+  annotate(geom="text", x=-0.285, y=-0.72, label="Baseline v Day2 ; p = 0.006",size=3, fontface="bold")+
+  annotate(geom="text", x=-0.31, y=-0.78, label="Day0 v Day2 ; p = 0.006",size=3, fontface="bold")+
+  annotate(geom="text", x=-0.31, y=-0.84, label="Day2 v Day8 ; p = 0.026",size=3, fontface="bold")+
+  annotate(geom="text", x=-0.3, y=-0.90, label="Day2 v Day14 ; p = 0.011",size=3, fontface="bold")+
+  annotate(geom="text", x=-0.3, y=-0.96, label="Day2 v Day28 ; p = 0.001",size=3, fontface="bold") + ggtitle("Bray-Curtis Dissimiliarty")
+all_pcoa_subject1
+
+#ggexport(all_pcoa_subject1, filename="PCoA_BSS_Timepoints_with_stats.pdf", width=6, height=4)
+
+
+#ggexport(all_pcoa_subject1, filename="PCoA_Euks_Timepoints_with_stats_bray.pdf", width=6, height=4)
+
+library(downloadthis)
+all_pcoa_subject1 %>%
+  download_this(
+    output_name = "PCOA_bray_euks",
+    output_extension = ".pdf",
+    button_label = "Download figure as .pdf",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-solid fa-image",
+    ggsave_args = list(height=4, width=6)
+  )
+```
+
+
+
+```{r fig.cap="**Figure X. PCoA depicting relationships between samples based on eukaryotic species using canberra distance.**"}
+
+ord_filt_subject<- ordinate(phylo, "MDS", "canberra")  
+all_pcoa_subject2 <- plot_ordination(phylo, ord_filt_subject, type = "site", 
+                                   color = "Timepoint") + 
+  geom_point(size = 4) + theme_bw()+ scale_colour_brewer(type="qual", palette="Paired") +stat_ellipse(level=0.95)+
+  annotate(geom="text", x=-0.19, y=0.44, label="Baseline v Day2 ; p = 0.002",size=3, fontface="bold")+
+  annotate(geom="text", x=-0.21, y=0.40, label="Day0 v Day2 ; p = 0.002",size=3, fontface="bold")+
+  annotate(geom="text", x=-0.21, y=0.36, label="Day2 v Day8 ; p = 0.015",size=3, fontface="bold")+
+  annotate(geom="text", x=-0.20, y=0.32, label="Day2 v Day14 ; p = 0.015",size=3, fontface="bold")+
+  annotate(geom="text", x=-0.20, y=0.28, label="Day2 v Day28 ; p = 0.014",size=3, fontface="bold")+ ggtitle("Canberra")
+all_pcoa_subject2
+
+library(downloadthis)
+all_pcoa_subject2 %>%
+  download_this(
+    output_name = "PCOA_canberra_euks",
+    output_extension = ".pdf",
+    button_label = "Download figure as .pdf",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-solid fa-image",
+    ggsave_args = list(height=4, width=6)
+  )
+
+
+```
+
+
+<br><br>
+
+-------
+
+
+## 4. Genus level analysis
+
+### 4.1 PERMANOVA
+
+Used permutational multivariate analysis of variance (PERMANOVA) to assess differences in microbial community composition between groups. 
+
+
+```{r}
+
+genus<-tax_glom(phylo, "genus")
+genus_df<-phyloseq_to_df(genus, addtax=T)
+#write.csv(genus_df, "Genus_counts_normalized.csv")
+rownames(genus_df)<-genus_df[,"genus"]
+genus_df[,c("OTU","kingdom","phylum","order","family","class","species","genus","OTU.1")]<-NULL
+
+genus_df<-as.data.frame(t(genus_df))
+genus_bray<-pairwise.adonis2(genus_df~Timepoint, data=metadata)
+
+
+results_df <- do.call(rbind, genus_bray)
+results_df <- results_df[grepl("Model", rownames(results_df)), ]
+results_df$Comparison<-rownames(results_df)
+results_df<- results_df %>% mutate(Comparison = gsub(".Model", "", Comparison))
+rownames(results_df)<-results_df$Comparison
+
+results_df<-results_df %>% mutate_at(1:5, as.numeric)
+results_df[c(1:5)] <- lapply(results_df[c(1:5)], round, digits = 3)
+
+results_df[,c(1,2,6)]<-NULL
+results_df %>% kable(caption="<strong>Table X. Differences in eukaryotic composition at genus level using Bray-Curtis Dissimilarity.<strong>") %>% kable_styling()%>%
+   column_spec(4, color=ifelse(results_df[,3] < 0.05, "green","black")) %>% 
+  scroll_box(width = "650px", height="650px", fixed_thead=T)
+```
+
+```{r}
+library(downloadthis)
+results_df %>%
+  download_this(
+    output_name = "Differentally abundant eukaryotes",
+    output_extension = ".csv",
+    button_label = "Download Results",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+
+```
+
+<br><br> 
+
+>Notes: Differences also observed a genus level for day2. 
+
+<br>
+
+----------
+
+<br><br>
+
+## 5. Differential abundance 
+
+Used Maaslin2 to look for differentially abundant eukaryotic genera between timepoints after BSS and day 0 using a linear model ("LM") and log transformation. SubjectID and Sequence Run were incorporated as random effects. 
+
+```{r results=FALSE, message=FALSE, warning=FALSE, cache=TRUE}
+
+library(Maaslin2)
+
+metadata<-read.csv("BSS_metadata update10FEB2025.csv", row.names=1, header=TRUE)
+metadata<-as.data.frame(t(metadata))
+metadata[, c("ATCCMSA2002control_P1","ATCCMSA2002control_P2","NegativeControl","NegativeControl_P2")] <- NULL
+metadata<-as.data.frame(t(metadata))
+
+metadata$Age<-as.numeric(metadata$Age)
+metadata$Day.of.sample.relative.to.BSS.administration<-as.numeric(metadata$Day.of.sample.relative.to.BSS.administration)
+metadata$Day<-as.numeric(metadata$Day)
+metadata$Calculated.BMI<-as.numeric(metadata$Calculated.BMI)
+metadata$Days_colonoscopy_bl<-as.numeric(metadata$Days_colonoscopy_bl)
+metadata$Days_colonoscopy_day0<-as.numeric(metadata$Days_colonoscopy_day0)
+
+
+subject_all = Maaslin2(
+  input_data = genus_df,
+  input_metadata = metadata, 
+  output = "Timepoint_DAA_LM_Day0_genus",
+  fixed_effects = c('Timepoint'), normalization="NONE", reference=c("Timepoint,Day 0"), random_effect=c("SubjectID", "SequenceRun"), analysis_method="LM", transform="LOG", plot_scatter = FALSE)
+
+LM<-subject_all$results
+
+
+
+table<-as.data.frame(LM[,c("feature","value","coef","qval","N.not.zero")])
+
+table_sub<- table %>% filter(qval < 0.05)
+table_sub2<- table_sub %>% filter(coef< -1)
+table_sub3<- table_sub %>% filter(coef > 1)
+table_sub4_day0<-rbind(table_sub2, table_sub3)
+table_sub4_day0$genus<-table_sub4_day0$feature
+taxa[,c("species","OTU")]<-NULL
+taxa_uniq<-data.frame(unique(taxa))
+DAA_taxa<-merge.data.frame(table_sub4_day0, taxa_uniq, by="genus", all.x=TRUE, all.y=FALSE)
+
+```
+
+<br><br>
+
+```{r}
+
+DAA_taxa_select<-DAA_taxa[,c(1,4,5,8:11)]
+
+DAA_taxa_select <- DAA_taxa_select[order(DAA_taxa_select$qval, decreasing=FALSE),]
+
+DAA_taxa_select$qval<-formatC(DAA_taxa_select$qval, format = "e", digits = 1)
+DAA_taxa_select$coef<-round(DAA_taxa_select$coef, digits=2)
+
+
+
+
+
+dust(DAA_taxa_select) %>%
+  kable(caption = "<strong>Table X. Differentially abundant eukaryotes at the genus level at day 2 compared to day 0.<strong>") %>%
+  kable_styling(bootstrap_options = c("striped")) %>% column_spec(column=3, width_min="5em", include_thead = T) %>% 
+  scroll_box(width = "750px", height="650px", fixed_thead=T) 
+
+library(downloadthis)
+DAA_taxa_select %>%
+  download_this(
+    output_name = "Differentally abundant eukaryote genera",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+
+
+```
+
+<br><br>
+
+### 5.1 Eukaryote barchart
+
+```{r}
+
+
+
+DAA_taxa$phylum<- factor(DAA_taxa$phylum,
+    levels = c('Apicomplexa','Ascomycota','Bacillariophyta','Basidiomycota','Euglenozoa','Parabasalia'), ordered = TRUE)
+
+DAA_taxa<-DAA_taxa %>% filter(value == "Day 2")
+DAA_taxa$genus <- factor(DAA_taxa$genus, levels = DAA_taxa$genus[order(DAA_taxa$phylum, decreasing=TRUE)])
+
+
+library(RColorBrewer); library(scales)
+nb.cols <- 6
+mycolors <- colorRampPalette(brewer.pal(8, "Set1"))(nb.cols)
+
+DAA_taxa<- DAA_taxa %>% mutate(updated_text = gsub("_", " ", genus))
+
+
+
+
+DAA_taxa$updated_text<- factor(DAA_taxa$updated_text, levels = DAA_taxa$updated_text[order(DAA_taxa$phylum, DAA_taxa$coef, decreasing=TRUE)])
+
+stacked_species<-ggplot(DAA_taxa, aes(x = coef, y = updated_text, fill=phylum)) +
+  geom_bar(stat = "identity",show.legend = TRUE) + xlab("Effect size") +scale_fill_manual(values=mycolors)+theme_classic()+geom_col(color="black")+theme(legend.position="bottom")+ylab(NULL)
+
+#stacked_species
+
+
+
+```
+
+```{r}
+
+DAA_taxa$qval_adj<-(-log10(DAA_taxa$qval))
+
+bubble_species<-ggplot(DAA_taxa, aes(x=value, y=updated_text, size = qval_adj)) + geom_point(alpha=1, aes(color=phylum))+scale_size(range=c(2,5), "p val")+scale_color_manual(values=mycolors)+theme_void()+guides(color="none", fill="none")
+
+#bubble_species
+
+
+ggexport(stacked_species+bubble_species, filename="Stacked_plot_genus_euks_w_qval_v2.pdf",width=6, height=8)
+
+```
+
+```{r fig.width=6, fig.height=8, fig.cap="**Figure X. Differentially abundant eukaryotic genera (effect size > 1 or <  - 1) colored by phylum 2 days (day 2) after compared to day before (day 0) BSS administration. Significance represents -log10 of adjusted p value after multiple comparisons (< 0.05). The greater the circle the more statistically significant.**"}
+
+figure<-stacked_species+bubble_species
+
+figure
+
+
+library(downloadthis)
+figure %>%
+  download_this(
+    output_name = "Stacked_plot_euks",
+    output_extension = ".pdf",
+    button_label = "Download figure as .pdf",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-solid fa-image",
+    ggsave_args = list(height=8, width=6)
+  )
+
+```
+
+
+

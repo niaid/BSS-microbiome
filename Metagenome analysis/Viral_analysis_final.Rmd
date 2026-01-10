@@ -1,0 +1,654 @@
+---
+title: "The gut microbiome after BSS dosing."
+author: "Lauren Krausfeldt"
+date: "2026-January-9"
+output:
+  html_document:
+    code_folding: hide
+    keep_md: yes
+    toc: true
+    toc_float: true
+    toc_depth: 6
+  pdf_document: default
+mainfont: "Times New Roman"
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Methods
+
+Data was evaluated with fastqc and determined to have nextera
+transposase adapter contamination. Data was run through Nephele's QC
+pipeline for adapter trimming. Trimmed data was
+passed through WGSA2 pipeline in Nephele where it was decontaminated for
+human reads. Assemblies fasta and bam files were passed through Nephele's virome pipelines, DiscoVir, to produce a vOTU abundance table which is used in this analysis. 
+
+```{r fig.height=8, fig.width=14, message=FALSE, warning=FALSE, results='hide'}
+
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(stringr)
+library(phyloseq)
+library(metagMisc)
+library(vegan)
+library(tidyverse)
+library(ggpubr)
+library(ggpubr)
+library(rstatix)
+library(knitr)
+library(GUniFrac)
+library(ggrepel)
+library(MMUPHin)
+library(ggprism)
+library(ggbreak)
+library(microbial)
+library(devtools)
+library(pairwiseAdonis)
+library(RColorBrewer)
+library(scales)
+library(ggtext)
+library(pixiedust)
+library(downloadthis)
+library(kableExtra)
+library(veganEx)
+```
+
+
+# Viral analysis
+
+## 1. Methods
+
+Data was evaluated with fastqc and determined to have nextera transposase adapter contamination. Data was run through Nephele's QC pipeline for adapter trimming. Trimmed data was passed through WGSA2 pipeline in Nephele where it was decontaminated for human reads. Assemblies and bam files were then passed through Nephele's DiscoVir pipeline where vOTUs were generated representing unique species of the virome and iPHoP was run to call hosts for each vOTU (viral species) generated. Abundance of hosts per sample were calculated by summing the CPM (TPM equivalent) of each vOTU per host genus. Viral OTUs was used for diversity analysis and host abundances were used for differential abundance analysis. 
+
+<br><br><br><br>
+
+----------
+
+## 2. Data processing 
+
+### Import data
+
+```{r warning=FALSE, message=FALSE}
+
+data<-read.csv("vOTU_table_cpm.csv", row.names=1, header=TRUE)
+
+metadata<-read.csv("BSS_metadata update10FEB2025.csv", row.names=1, header=TRUE)
+metadata<-as.data.frame(t(metadata))
+metadata[, c("ATCCMSA2002control_P1","ATCCMSA2002control_P2","NegativeControl","NegativeControl_P2")] <- NULL
+metadata<-as.data.frame(t(metadata))
+
+metadata$Age<-as.numeric(metadata$Age)
+metadata$Day.of.sample.relative.to.BSS.administration<-as.numeric(metadata$Day.of.sample.relative.to.BSS.administration)
+metadata$Day<-as.numeric(metadata$Day)
+metadata$Calculated.BMI<-as.numeric(metadata$Calculated.BMI)
+metadata$Days_colonoscopy_bl<-as.numeric(metadata$Days_colonoscopy_bl)
+metadata$Days_colonoscopy_day0<-as.numeric(metadata$Days_colonoscopy_day0)
+
+metadata$Timepoint <- factor(metadata$Timepoint,
+    levels = c('Baseline','Day 0','Day 2','Day 8','Day 14','Day 28'),ordered = TRUE)
+
+
+
+otu<-otu_table(data, taxa_are_rows=TRUE)
+meta<-sample_data(metadata)
+
+phylo_raw<-phyloseq(otu, meta)
+phylo_raw_df<-phyloseq_to_df(phylo_raw, addtax=F)
+rownames(phylo_raw_df)<-phylo_raw_df[,1]
+phylo_raw_df<-dplyr::select(phylo_raw_df, -c("OTU"))
+metadata<-data.frame(sample_data(phylo_raw))
+phylo_raw_df<-as.data.frame(t(phylo_raw_df))
+#pairwise.adonis2(phylo_raw_df~SequenceRun, data=metadata)
+
+
+```
+
+### Filtering
+
+Filtered for prevalence (10%) and abundance (count of 10) instead of critical value to increase number of taxa analyzed. Both must be true to pass filter. 
+
+```{r}
+
+
+#critical_value <- 0.00001*sum(taxa_sums(phylo_raw))
+#phylo <- filter_taxa(phylo_raw, function(x) sum(x) > critical_value, TRUE)
+#phylo
+
+phylo<-phyloseq_filter_prevalence(phylo_raw, abund.trh= 500, prev.trh=0.1, abund.type="total", threshold_condition ="OR")
+phylo
+
+
+
+```
+
+```{r results=FALSE, message=FALSE, cache=TRUE, warning=FALSE}
+
+
+summary(sample_sums(phylo))
+
+phylo_df<-phyloseq_to_df(phylo, addtax=F)
+rownames(phylo_df)<-phylo_df[,1]
+phylo_df<-dplyr::select(phylo_df, -c("OTU"))
+
+```
+
+<br><br><br> 
+
+### Calculating alpha diversity
+
+```{r warning=FALSE, message=FALSE}
+
+
+## calculate alpha diversity
+otu_round<-otu_table(round(phylo_df), taxa_are_rows=TRUE)
+phylo_round<-phyloseq(otu_round, meta)
+
+phy_alphadiv <- estimate_richness(phylo_round)
+otu_table <- otu_table(t(phylo_round))
+evenness<- diversity(otu_table)/log(specnumber(otu_table))
+chao1 <- t(estimateR(otu_table))[,2]
+all_alphadivs <- data.frame(phy_alphadiv, evenness, chao1)
+update_sample_data <- merge(sample_data(phylo_round), all_alphadivs, by=0)
+rownames(update_sample_data) <- update_sample_data$Row.names
+update_sample_data$Row.names <- NULL
+sample_data(phylo) <- update_sample_data
+metadata<-update_sample_data
+
+
+```
+
+```{r}
+
+all_alphadivs %>% kable(caption="<center><strong>Table X. Alpha diversity of viral OTUs.<center><strong>") %>% kable_styling() %>% 
+  scroll_box(width = "750px", height="650px", fixed_thead=T)
+
+```
+
+
+<br><br><br><br>
+
+-----------
+
+## 3. Alpha diversity
+
+```{r}
+
+metadata$Timepoint <- factor(metadata$Timepoint,
+    levels = c('Baseline','Day 0','Day 2','Day 8','Day 14','Day 28'),ordered = TRUE)
+
+```
+
+```{r results='hide'}
+
+
+library(emmeans)
+library(lme4)
+fit <- lmer(Shannon~Timepoint + (1|SubjectID), data = metadata)
+
+emmeans<-summary(emmeans(fit, pairwise~Timepoint))
+summary<-data.frame(emmeans$contrasts)
+summary <- summary %>% separate(contrast, c('group1', 'group2'), sep=" - ")
+
+summary$p<-round(summary$`p.value`, digits = 3)
+summary$y.position<-5.9
+summary
+
+
+shann_plot<-ggplot(metadata, aes(Timepoint, Shannon)) +geom_boxplot(aes(middle = mean(Shannon), color=Timepoint, fill=Timepoint), outlier.shape=NA, color="black")+geom_point(position = position_jitter(width = 0.3, height=0, seed=1), size=1, color="black")+labs(x=NULL, y="Shannon", title="Shannon")+theme_bw() + ylab("Shannon")+theme(axis.text.x=element_text(size=10, angle = 45, hjust = 1), axis.text.y=element_text(size=10), axis.title=element_text(size=12), plot.title = element_text(size=12), legend.position="none")+ scale_colour_brewer(type="qual", palette="Paired") +scale_fill_brewer(type="qual", palette="Paired")+scale_y_continuous(limits=c(0,8))+add_pvalue(summary[2,], label="p",bracket.nudge.y=0.75, bracket.shorten=3.75) + add_pvalue(summary[6,], label="p", bracket.shorten=1.75) + add_pvalue(summary[10,], label="p", bracket.shorten=1.75) + add_pvalue(summary[11,], label="p", bracket.nudge.y=0.75, bracket.shorten=3.75) + add_pvalue(summary[12,], label="p", bracket.nudge.y=1.5, bracket.shorten=5.75)
+#shann_plot
+
+```
+
+```{r results='hide'}
+
+
+fit <- lmer(InvSimpson~Timepoint + (1|SubjectID), data = metadata)
+
+emmeans<-summary(emmeans(fit, pairwise~Timepoint))
+summary<-data.frame(emmeans$contrasts)
+summary <- summary %>% separate(contrast, c('group1', 'group2'), sep=" - ")
+
+summary$p<-round(summary$`p.value`, digits = 3)
+summary$y.position<-250
+summary
+
+invsimp_plot<-ggplot(metadata, aes(Timepoint, InvSimpson)) +geom_boxplot(aes(middle = mean(InvSimpson), color=Timepoint, fill=Timepoint), outlier.shape=NA, color="black")+geom_point(position = position_jitter(width = 0.3, height=0, seed=1), size=1, color="black")+labs(x=NULL, y="InvSimpson", title="InvSimpson")+theme_bw() + ylab("InvSimpson")+theme(axis.text.x=element_text(size=10, angle = 45, hjust = 1), axis.text.y=element_text(size=10), axis.title=element_text(size=12), plot.title = element_text(size=12), legend.position="none")+ scale_colour_brewer(type="qual", palette="Paired") +scale_fill_brewer(type="qual", palette="Paired")+scale_y_continuous(limits=c(0,300))+add_pvalue(summary[2,], label="p",bracket.nudge.y=25, bracket.shorten=3.75) + add_pvalue(summary[6,], label="p", bracket.shorten=1.75) + add_pvalue(summary[10,], label="p", bracket.shorten=1.75) + add_pvalue(summary[11,], label="p", bracket.nudge.y=25, bracket.shorten=3.75) + add_pvalue(summary[12,], label="p", bracket.nudge.y=50, bracket.shorten=5.75)
+
+
+```
+
+```{r results='hide'}
+
+fit <- lmer(evenness~Timepoint + (1|SubjectID), data = metadata)
+
+emmeans<-summary(emmeans(fit, pairwise~Timepoint))
+summary<-data.frame(emmeans$contrasts)
+summary <- summary %>% separate(contrast, c('group1', 'group2'), sep=" - ")
+
+summary$p<-round(summary$`p.value`, digits = 3)
+summary$y.position<-1.1
+
+summary
+
+even_plot<-ggplot(metadata, aes(Timepoint, evenness)) +geom_boxplot(aes(middle = mean(evenness), color=Timepoint, fill=Timepoint), outlier.shape=NA, color="black")+geom_point(position = position_jitter(width = 0.3, height=0, seed=1), size=1, color="black")+labs(x=NULL, y="evenness", title="evenness")+theme_bw() + ylab("evenness")+theme(axis.text.x=element_text(size=10, angle = 45, hjust = 1), axis.text.y=element_text(size=10), axis.title=element_text(size=12), plot.title = element_text(size=12), legend.position="none")+ scale_colour_brewer(type="qual", palette="Paired") +scale_fill_brewer(type="qual", palette="Paired")+scale_y_continuous(limits=c(0.5,1.4))+add_pvalue(summary[2,], label="p",bracket.nudge.y=0.1, bracket.shorten=3.75) + add_pvalue(summary[6,], label="p", bracket.shorten=1.75) + add_pvalue(summary[10,], label="p", bracket.shorten=1.75) + add_pvalue(summary[11,], label="p", bracket.nudge.y=0.1, bracket.shorten=3.75) + add_pvalue(summary[12,], label="p", bracket.nudge.y=0.2, bracket.shorten=5.75)
+
+```
+
+```{r results='hide'}
+#shapiro.test(metadata$Observed)
+#kruskal.test(Observed~Timepoint, data=metadata)
+
+fit <- lmer(Observed~Timepoint + (1|SubjectID), data = metadata)
+
+emmeans<-summary(emmeans(fit, pairwise~Timepoint))
+summary<-data.frame(emmeans$contrasts)
+summary <- summary %>% separate(contrast, c('group1', 'group2'), sep=" - ")
+
+summary$p<-round(summary$`p.value`, digits = 3)
+summary$y.position<-450
+
+summary
+
+obs_plot<-ggplot(metadata, aes(Timepoint, Observed)) +geom_boxplot(aes(middle = mean(Observed), color=Timepoint, fill=Timepoint), outlier.shape=NA, color="black")+geom_point(position = position_jitter(width = 0.3, height=0, seed=1), size=1, color="black")+labs(x=NULL, y="Observed", title="Observed")+theme_bw() + ylab("Observed")+theme(axis.text.x=element_text(size=10, angle = 45, hjust = 1), axis.text.y=element_text(size=10), axis.title=element_text(size=12), plot.title = element_text(size=12), legend.position="none")+ scale_colour_brewer(type="qual", palette="Paired") +scale_fill_brewer(type="qual", palette="Paired") +add_pvalue(summary[2,], label="p",bracket.nudge.y=35, bracket.shorten=3.75) + add_pvalue(summary[6,], label="p", bracket.shorten=1.75) + add_pvalue(summary[10,], label="p", bracket.shorten=1.75) + add_pvalue(summary[11,], label="p", bracket.nudge.y=35, bracket.shorten=3.75) + add_pvalue(summary[12,], label="p", bracket.nudge.y=70, bracket.shorten=5.75)
+
+ggexport(obs_plot, filename="Observed_vOTUs.pdf", width=3, height=5)
+
+```
+
+```{r fig.width=12, fig.height=4, fig.cap="Figure X. Alpha diversity versus timepoint."}
+
+alpha_Timepoint<-ggarrange(obs_plot, even_plot, shann_plot, invsimp_plot, nrow=1, ncol=4, align="hv", common.legend = TRUE)
+alpha_Timepoint
+#ggexport(alpha_Timepoint, filename="Alpha_diversity_viralOTUs.pdf", width=10, height=5)
+
+library(downloadthis)
+alpha_Timepoint %>%
+  download_this(
+    output_name = "Alpha_diversity_vOTUs",
+    output_extension = ".pdf",
+    button_label = "Download figure as .pdf",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-solid fa-image",
+    ggsave_args = list(height=3, width=8)
+  )
+```
+
+<br><br><br><br>
+
+>**Notes:** Significant differences for all alpha diversity metrics. 
+
+<br><br><br><br>
+
+-------------
+
+
+
+# Viral hosts
+
+## Data processing
+
+### Import data
+
+Import data and create phyloseq.
+
+```{r warning=FALSE, message=FALSE}
+
+data<-read.csv("Host_cpm.csv")
+
+taxa <- data[, c("kingdom","phylum","class","order","family","genus","OTU")]
+
+taxa<-data.frame(unique(taxa))
+data[, c("kingdom","phylum","class","order","family","genus","species","OTU","ATCCMSA2002control_P1","ATCCMSA2002control_P2","NegativeControl","NegativeControl_P2")] <- NULL 
+
+rownames(taxa)<-taxa$OTU
+
+
+data<-data.frame(aggregate(.~Host_genus,data=data,FUN=sum))
+
+
+
+rownames(data)<-data[,1]
+data[,1]<-NULL
+
+
+```
+ 
+
+```{r warning=FALSE, message=FALSE}
+metadata<-read.csv("BSS_metadata update10FEB2025.csv", row.names=1, header=TRUE)
+metadata<-as.data.frame(t(metadata))
+metadata[, c("ATCCMSA2002control_P1","ATCCMSA2002control_P2","NegativeControl","NegativeControl_P2")] <- NULL
+metadata<-as.data.frame(t(metadata))
+
+metadata$Age<-as.numeric(metadata$Age)
+metadata$Day.of.sample.relative.to.BSS.administration<-as.numeric(metadata$Day.of.sample.relative.to.BSS.administration)
+metadata$Day<-as.numeric(metadata$Day)
+metadata$Calculated.BMI<-as.numeric(metadata$Calculated.BMI)
+metadata$Days_colonoscopy_bl<-as.numeric(metadata$Days_colonoscopy_bl)
+metadata$Days_colonoscopy_day0<-as.numeric(metadata$Days_colonoscopy_day0)
+
+
+otu<-otu_table(data, taxa_are_rows=TRUE)
+meta<-sample_data(metadata)
+
+tax<-tax_table(as.matrix(taxa))
+
+phylo_raw<-phyloseq(otu, meta, tax)
+phylo_raw_df<-phyloseq_to_df(phylo_raw, addtax=F)
+rownames(phylo_raw_df)<-phylo_raw_df[,1]
+phylo_raw_df<-dplyr::select(phylo_raw_df, -c("OTU"))
+metadata<-data.frame(sample_data(phylo_raw))
+phylo_raw_df<-as.data.frame(t(phylo_raw_df))
+#pairwise.adonis2(phylo_raw_df~SequenceRun, data=metadata)
+
+phylo_raw
+
+```
+
+### Filtering
+
+Filtered for prevalence (10%) and abundance (CPM of 3). 
+
+```{r}
+
+
+#critical_value <- 0.00001*sum(taxa_sums(phylo_raw))
+#phylo <- filter_taxa(phylo_raw, function(x) sum(x) > critical_value, TRUE)
+#phylo
+
+phylo<-phyloseq_filter_prevalence(phylo_raw, abund.trh= 3, prev.trh=0.1, abund.type="total", threshold_condition ="AND")
+phylo
+summary(sample_sums(phylo))
+
+
+```
+
+
+```{r results=FALSE, message=FALSE, cache=TRUE, warning=FALSE}
+
+phylo_df<-phyloseq_to_df(phylo, addtax=F)
+rownames(phylo_df)<-phylo_df[,1]
+phylo_df<-dplyr::select(phylo_df, -c("OTU"))
+
+```
+
+<br><br>
+
+--------- 
+
+## 3. Beta diversity 
+
+Differences between time point (baseline, day0, Day2, Day8, Day14, Day28)
+
+### 3.1 PERMANOVA
+
+#### 3.1.1 Bray-Curtis
+
+```{r}
+
+phylo_df<-as.data.frame(t(phylo_df))
+bray<-pairwise.adonis2(phylo_df~Timepoint, data=metadata)
+
+results_df <- do.call(rbind, bray)
+results_df <- results_df[grepl("Model", rownames(results_df)), ]
+results_df$Comparison<-rownames(results_df)
+results_df<- results_df %>% mutate(Comparison = gsub(".Model", "", Comparison))
+rownames(results_df)<-results_df$Comparison
+
+results_df<-results_df %>% mutate_at(1:5, as.numeric)
+results_df[c(1:5)] <- lapply(results_df[c(1:5)], round, digits = 3)
+
+results_df[,c(1,2,6)]<-NULL
+results_df %>% kable(caption="<strong>Table X. Differences in viruses by host using Bray-Curtis Dissimilarity.<strong>", format="html", full_width = FALSE, table.attr= "style='width:80%;'") %>% kable_styling(position="left", bootstrap_options = c("striped"))%>%
+   column_spec(4, color=ifelse(results_df[,3] < 0.05, "green","black"))
+
+
+library(downloadthis)
+results_df %>%
+  download_this(
+    output_name = "PERMANOVAresults-virus-host-bray",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+
+
+```
+
+<br>
+
+```{r fig.cap="**Figure X. PCoA depicting relationships between samples based on eukaryotic species using Bray-Curtis Dissimilarity.**", fig.align='left'}
+
+ord_filt_subject<- ordinate(phylo, "MDS", "bray")  
+all_pcoa_subject1 <- plot_ordination(phylo, ord_filt_subject, type = "site", 
+                                   color = "Timepoint") + 
+  geom_point(size = 4) + theme_bw()+ scale_colour_brewer(type="qual", palette="Paired") +stat_ellipse(level=0.95)+
+  annotate(geom="text", x=-0.455, y=0.75, label="Baseline v Day2 ; p = 0.001",size=3, fontface="bold")+
+  annotate(geom="text", x=-0.48, y=0.85, label="Day0 v Day2 ; p = 0.001",size=3, fontface="bold")+
+  annotate(geom="text", x=-0.48, y=0.95, label="Day2 v Day8 ; p = 0.001",size=3, fontface="bold")+
+  annotate(geom="text", x=-0.47, y=1.05, label="Day2 v Day14 ; p = 0.001",size=3, fontface="bold")+
+  annotate(geom="text", x=-0.47, y=1.15, label="Day2 v Day28 ; p = 0.001",size=3, fontface="bold")
+all_pcoa_subject1
+
+#ggexport(all_pcoa_subject1, filename="PCoA_BSS_Timepoints_with_stats.pdf", width=6, height=4)
+
+
+#ggexport(all_pcoa_subject1, filename="PCoA_Host_Timepoints_with_stats_bray.pdf", width=7, height=4)
+
+library(downloadthis)
+all_pcoa_subject1 %>%
+  download_this(
+    output_name = "PCOA_viral-host_bray",
+    output_extension = ".pdf",
+    button_label = "Download figure as .pdf",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-solid fa-image",
+    ggsave_args = list(height=4, width=7)
+  )
+
+```
+
+<br>
+
+#### 3.1.2 Canberra
+
+```{r}
+
+can<-pairwise.adonis2(phylo_df~Timepoint, data=metadata, method="canberra")
+
+results_df <- do.call(rbind, can)
+results_df <- results_df[grepl("Model", rownames(results_df)), ]
+results_df$Comparison<-rownames(results_df)
+results_df<- results_df %>% mutate(Comparison = gsub(".Model", "", Comparison))
+rownames(results_df)<-results_df$Comparison
+
+results_df<-results_df %>% mutate_at(1:5, as.numeric)
+results_df[c(1:5)] <- lapply(results_df[c(1:5)], round, digits = 3)
+
+results_df[,c(1,2,6)]<-NULL
+results_df %>% kable(caption="<strong>Table X. Differences in viruses by host using Canberra distance.<strong>", format="html", full_width = FALSE, table.attr= "style='width:80%;'") %>% kable_styling(position="left", bootstrap_options = c("striped"))%>%
+   column_spec(4, color=ifelse(results_df[,3] < 0.05, "green","black"))
+
+
+library(downloadthis)
+results_df %>%
+  download_this(
+    output_name = "PERMANOVAresults-virus-host-canberra",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+
+```
+
+<br>
+
+> **Notes:** Differences in composition between day2 and baseline, day0, day8, day14, with BrayCurtis dissimilarity and canberra. Not show: differences in anosim as well, another multivariate test for data with differing variance. 
+
+<br>
+
+
+-----------
+
+## 4. Differential abundance 
+
+Used Maaslin2 to look for differentially abundant taxa between timepoints after BSS and day 0 using a linear model ("LM"). SubjectID and Sequence Run were incorporated as random effects.
+
+```{r results=FALSE, message=FALSE, warning=FALSE, cache=TRUE}
+
+library(Maaslin2)
+
+metadata<-data.frame(sample_data(phylo))
+
+subject_all = Maaslin2(
+  input_data = phylo_df,
+  input_metadata = metadata, 
+  output = "Timepoint_DAA_LM_Day0_hosts",
+  fixed_effects = c('Timepoint'), normalization="NONE", reference=c("Timepoint,Day 0"), random_effect=c("SubjectID", "SequenceRun"), analysis_method="LM", transform="LOG", plot_scatter = FALSE)
+
+LM<-subject_all$results
+
+
+## re-install maaslin2 to fix package error. Log transform with linear model? 
+
+table<-as.data.frame(LM[,c("feature","value","coef","qval","N.not.zero")])
+table$OTU<-table$feature
+#write.csv(DAA_taxa, "DAA_species.csv")
+
+DAA_taxa<-merge.data.frame(table, taxa, by="OTU", all.x=TRUE, all.y=FALSE)
+#write.csv(DAA_taxa, "DAA_species.csv")
+
+```
+
+```{r}
+
+table_sub<- DAA_taxa %>% filter(qval < 0.05)
+table_sub2<- table_sub %>% filter(coef< -1)
+table_sub3<- table_sub %>% filter(coef > 1)
+table_sub4<-rbind(table_sub2, table_sub3)
+
+table_sub4[table_sub4=="p__Firmicutes_A"] <- "Bacillota"
+table_sub4[table_sub4=="p__Firmicutes_C"] <- "Bacillota"
+table_sub4[table_sub4=="p__Firmicutes"] <- "Bacillota"
+table_sub4[table_sub4=="p__Bacteroidota"] <- "Bacteroidota"
+table_sub4[table_sub4=="p__Proteobacteria"] <- "Pseudomonadota"
+
+
+table_sub4$phylum<- factor(table_sub4$phylum,
+    levels = c('Bacillota','Bacteroidota','Pseudomonadota'), ordered = TRUE)
+
+
+table_sub4<- table_sub4 %>% mutate(genus = gsub("f__", " ", genus))
+table_sub4<- table_sub4 %>% mutate(genus = gsub("g__", " ", genus))
+
+table_sub4<- table_sub4 %>% mutate(family = gsub("f__", " ", family))
+table_sub4<- table_sub4 %>% mutate(order = gsub("o__", " ", order))
+table_sub4<- table_sub4 %>% mutate(class = gsub("c__", " ", class))
+
+
+###### 
+
+table_sub5<-table_sub4[,c(12,4,5,8:11)] 
+names(table_sub5)[1]<-"Viral host"
+
+
+table_sub5$qval<-formatC(table_sub5$qval, format = "e", digits = 2)
+table_sub5$coef<-round(table_sub5$coef, digits = 2)
+
+table_sub5 <- table_sub5[order(table_sub5$qval, decreasing=FALSE),]
+
+dust(table_sub5) %>%
+  kable(caption = "<strong>Table X. Differentially abundant viruses by host at day 2 compared to day 0.<strong>") %>% column_spec(column=3, width_min="5em", include_thead = T)  %>%
+  kable_styling(bootstrap_options = c("striped")) %>% 
+  scroll_box(width = "800px", height="650px", fixed_thead=T)
+
+
+library(downloadthis)
+table_sub5 %>%
+  download_this(
+    output_name = "Differentally abundant viruses by host",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+
+```
+
+
+<br><br>
+
+### 4.1 Viral barchart 
+
+```{r}
+
+mycolors <- c("#2D82AF","#98D277","#D9A295")
+
+table_sub4<- table_sub4 %>% mutate(updated_text = gsub("f__", " ", genus))
+
+table_sub4<- table_sub4 %>% mutate(updated_text = gsub("g__", " ", updated_text))
+
+
+table_sub4$updated_text<- factor(table_sub4$updated_text, levels = table_sub4$updated_text[order(table_sub4$phylum, table_sub4$coef, decreasing=TRUE)])
+
+stacked_species<-ggplot(table_sub4, aes(x = coef, y = updated_text, fill=phylum)) +
+  geom_bar(stat = "identity",show.legend = TRUE) + xlab("Effect size") +scale_fill_manual(values=mycolors)+theme_classic()+geom_col(color="black")+theme(legend.position="bottom")+ylab(NULL)
+
+#stacked_species
+
+
+
+```
+
+
+```{r}
+
+
+table_sub4$qval_adj<--log10(table_sub4$qval)
+
+bubble_species<-ggplot(table_sub4, aes(x=value, y=updated_text, size = qval_adj)) + geom_point(alpha=1, aes(color=phylum))+scale_size_area(breaks=c(2,3,4,5), "Significance")+scale_color_manual(values=mycolors)+theme_void()+guides(color="none", fill="none")
+
+#bubble_species
+
+
+#ggexport(stacked_species+bubble_species, filename="Stacked_plot_genus_hosts_w_qval_v2.pdf",width=5, height=6)
+
+
+```
+
+
+```{r fig.width=6, fig.height=8, fig.cap="**Figure X. Differentially abundant functional pathways (effect size > 1 or <  - 1) 2 days (day 2) after compared to day before (day 0) BSS administration. Significance represents -log10 of adjusted p value after multiple comparisons (< 0.05). The greater the circle the more statistically significant.**"}
+
+stacked_species+bubble_species
+figure<-stacked_species+bubble_species
+
+
+
+library(downloadthis)
+figure %>%
+  download_this(
+    output_name = "Stacked_plot_viral_host",
+    output_extension = ".pdf",
+    button_label = "Download figure as .pdf",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-solid fa-image",
+    ggsave_args = list(height=8, width=8)
+  )
+
+```
+
+<br><br>
+
+
+

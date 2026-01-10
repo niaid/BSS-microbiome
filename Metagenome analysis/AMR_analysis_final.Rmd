@@ -1,0 +1,471 @@
+---
+title: "The gut microbiome after BSS dosing."
+author: "Lauren Krausfeldt"
+date: "2026-January-9"
+output:
+  html_document:
+    code_folding: hide
+    keep_md: yes
+    toc: true
+    toc_float: true
+    toc_depth: 6
+    theme: spacelab
+  pdf_document: default
+
+---
+
+```{=html}
+<style>
+body, p {
+  font-family: Arial;
+  text-align: justify;
+  font-size: 12pt;
+}
+</style>
+```
+```{=html}
+<style>
+caption {
+      color: black;
+      font-weight: bold;
+      text-align: justify;
+    }
+</style>
+```
+
+# AMR genes
+
+v2: updated stacked bar chart with appropriate bubble sizes. 
+
+## 1. Methods
+
+Data was evaluated with fastqc and determined to have nextera transposase adapter contamination. Data was run through Nephele's QC pipeline for adapter trimming. Trimmed data was passed through WGSA2 pipeline in Nephele where it was decontaminated for human reads. AMR detection was performed on assemblies using AMR-Finder as a part of the WGSA2 pipeline. CPM (equivalent to TPM) of AMR genes were used in this analysis. 
+
+```{r message=FALSE, warning=FALSE, results='hide'}
+
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(stringr)
+library(phyloseq)
+library(metagMisc)
+library(vegan)
+library(tidyverse)
+library(ggpubr)
+library(ggpubr)
+library(rstatix)
+library(knitr)
+library(GUniFrac)
+library(ggrepel)
+library(MMUPHin)
+library(ggprism)
+library(ggbreak)
+library(microbial)
+library(devtools)
+library(pairwiseAdonis)
+library(RColorBrewer)
+library(scales)
+library(ggtext)
+library(veganEx)
+library(kableExtra)
+library(pixiedust)
+library(downloadthis)
+```
+
+
+## 2. Data processing 
+
+### Import data
+
+Created phyloseq object. 
+
+```{r warning=FALSE, message=FALSE}
+
+data<-read.csv("Final_AMR_table.csv", row.names=1, header=TRUE)
+
+taxa <- data[, c("kingdom","phylum","class","order","family","OTU")]
+data[, c("kingdom","phylum","class","order","OTU","family")] <- NULL 
+
+
+
+```
+
+
+```{r warning=FALSE, message=FALSE}
+metadata<-read.csv("BSS_metadata update10FEB2025.csv", row.names=1, header=TRUE)
+metadata<-as.data.frame(t(metadata))
+metadata[, c("ATCCMSA2002control_P1","ATCCMSA2002control_P2","NegativeControl","NegativeControl_P2")] <- NULL
+metadata<-as.data.frame(t(metadata))
+
+metadata$Age<-as.numeric(metadata$Age)
+metadata$Day.of.sample.relative.to.BSS.administration<-as.numeric(metadata$Day.of.sample.relative.to.BSS.administration)
+metadata$Day<-as.numeric(metadata$Day)
+metadata$Calculated.BMI<-as.numeric(metadata$Calculated.BMI)
+metadata$Days_colonoscopy_bl<-as.numeric(metadata$Days_colonoscopy_bl)
+metadata$Days_colonoscopy_day0<-as.numeric(metadata$Days_colonoscopy_day0)
+
+
+otu<-otu_table(data, taxa_are_rows=TRUE)
+meta<-sample_data(metadata)
+tax<-tax_table(as.matrix(taxa))
+
+phylo_raw<-phyloseq(otu, meta, tax)
+phylo_raw_df<-phyloseq_to_df(phylo_raw, addtax=F)
+rownames(phylo_raw_df)<-phylo_raw_df[,1]
+phylo_raw_df<-dplyr::select(phylo_raw_df, -c("OTU"))
+metadata<-data.frame(sample_data(phylo_raw))
+phylo_raw_df<-as.data.frame(t(phylo_raw_df))
+#pairwise.adonis2(phylo_raw_df~SequenceRun, data=metadata)
+
+phylo_raw
+
+```
+
+### Filtering
+
+Filtered for prevalence (10%) and abundance (CPM of 3). 
+
+```{r}
+
+
+#critical_value <- 0.00001*sum(taxa_sums(phylo_raw))
+#phylo <- filter_taxa(phylo_raw, function(x) sum(x) > critical_value, TRUE)
+#phylo
+
+phylo<-phyloseq_filter_prevalence(phylo_raw, abund.trh= 3, prev.trh=0.1, abund.type="total", threshold_condition ="AND")
+phylo
+
+summary(sample_sums(phylo))
+
+phylo_df<-phyloseq_to_df(phylo, addtax=F)
+rownames(phylo_df)<-phylo_df[,1]
+phylo_df<-dplyr::select(phylo_df, -c("OTU"))
+
+
+
+```
+
+
+<br>
+
+--------
+
+<br><br>
+
+## 3. AMR gene composition
+
+Used permutational multivariate analysis of variance (PERMANOVA) to assess differences in microbial community composition between groups. 
+
+### 3.1 Permanova 
+
+#### 3.1.1 Bray-Curtis
+
+
+```{r}
+
+phylo_df<-as.data.frame(t(phylo_df))
+bray<-pairwise.adonis2(phylo_df~Timepoint, data=metadata)
+
+results_df <- do.call(rbind, bray)
+results_df <- results_df[grepl("Model", rownames(results_df)), ]
+results_df$Comparison<-rownames(results_df)
+results_df<- results_df %>% mutate(Comparison = gsub(".Model", "", Comparison))
+rownames(results_df)<-results_df$Comparison
+
+results_df<-results_df %>% mutate_at(1:5, as.numeric)
+results_df[c(1:5)] <- lapply(results_df[c(1:5)], round, digits = 3)
+
+results_df[,c(1,2,6)]<-NULL
+results_df %>% kable(caption="<strong>Table X. Differences in AMR gene composition using Bray-Curtis Dissimilarity.<strong>", format="html", full_width = FALSE, table.attr= "style='width:80%;'") %>% kable_styling(position="left", bootstrap_options = c("striped"))%>%
+   column_spec(4, color=ifelse(results_df[,3] < 0.05, "green","black"))
+
+
+library(downloadthis)
+results_df %>%
+  download_this(
+    output_name = "PERMANOVAresults-pathways-bray",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+
+
+```
+
+<br><br>
+
+```{r fig.cap="**Figure X. PCoA depicting relationships between samples based on eukaryotic species using Bray-Curtis Dissimilarity.**", fig.align='left'}
+
+ord_filt_subject<- ordinate(phylo, "MDS", "bray")  
+all_pcoa_subject1 <- plot_ordination(phylo, ord_filt_subject, type = "site", 
+                                   color = "Timepoint") + 
+  geom_point(size = 1) + theme_bw()+ scale_colour_brewer(type="qual", palette="Paired") +stat_ellipse(level=0.95) +
+  annotate(geom="text", x=-0.375, y=0.75, label="Baseline v Day2 ; p = 0.001",size=3, fontface="bold")+
+  annotate(geom="text", x=-0.4, y=0.85, label="Day0 v Day2 ; p = 0.001",size=3, fontface="bold")+
+  annotate(geom="text", x=-0.40, y=0.95, label="Day2 v Day8 ; p = 0.001",size=3, fontface="bold")+
+  annotate(geom="text", x=-0.392, y=1.05, label="Day2 v Day14 ; p = 0.001",size=3, fontface="bold")+
+  annotate(geom="text", x=-0.39, y=1.15, label="Day2 v Day28 ; p = 0.001",size=3, fontface="bold")
+all_pcoa_subject1
+
+
+#ggexport(all_pcoa_subject1, filename="PCoA_AMRs_Timepoints_with_stats_bray.pdf", width=7, height=4)
+
+library(downloadthis)
+all_pcoa_subject1 %>%
+  download_this(
+    output_name = "PCOA_bray_AMR",
+    output_extension = ".pdf",
+    button_label = "Download figure as .pdf",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-solid fa-image",
+    ggsave_args = list(height=4, width=7)
+  )
+
+```
+
+<br><br>
+
+#### 3.1.2 Canberra
+
+```{r}
+
+
+can<-pairwise.adonis2(phylo_df~Timepoint, data=metadata, method="canberra")
+
+results_df <- do.call(rbind, can)
+results_df <- results_df[grepl("Model", rownames(results_df)), ]
+results_df$Comparison<-rownames(results_df)
+results_df<- results_df %>% mutate(Comparison = gsub(".Model", "", Comparison))
+rownames(results_df)<-results_df$Comparison
+
+results_df<-results_df %>% mutate_at(1:5, as.numeric)
+results_df[c(1:5)] <- lapply(results_df[c(1:5)], round, digits = 3)
+
+results_df[,c(1,2,6)]<-NULL
+results_df %>% kable(caption="<strong>Table X. Differences in AMR gene composition using Canberra distance.<strong>", format="html", full_width = FALSE, table.attr= "style='width:80%;'") %>% kable_styling(position="left", bootstrap_options = c("striped"))%>%
+   column_spec(4, color=ifelse(results_df[,3] < 0.05, "green","black"))
+
+
+library(downloadthis)
+results_df %>%
+  download_this(
+    output_name = "PERMANOVAresults-pathways-canberra",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+
+```
+
+<br><br>
+
+#### 3.1.3 Jaccard
+
+```{r}
+
+jaccard<-pairwise.adonis2(phylo_df~Timepoint, data=metadata, method="jaccard")
+
+results_df <- do.call(rbind, jaccard)
+results_df <- results_df[grepl("Model", rownames(results_df)), ]
+results_df$Comparison<-rownames(results_df)
+results_df<- results_df %>% mutate(Comparison = gsub(".Model", "", Comparison))
+rownames(results_df)<-results_df$Comparison
+
+results_df<-results_df %>% mutate_at(1:5, as.numeric)
+results_df[c(1:5)] <- lapply(results_df[c(1:5)], round, digits = 3)
+
+results_df[,c(1,2,6)]<-NULL
+results_df %>% kable(caption="<strong>Table X. Differences in AMR gene composition using Jaccard Index.<strong>", format="html", full_width = FALSE, table.attr= "style='width:80%;'") %>% kable_styling(position="left", bootstrap_options = c("striped"))%>%
+   column_spec(4, color=ifelse(results_df[,3] < 0.05, "green","black"))
+
+
+library(downloadthis)
+results_df %>%
+  download_this(
+    output_name = "PERMANOVAresults-pathways-jaccard",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+
+
+```
+
+
+<br> 
+
+> **Notes:** Differences in composition between day2 and baseline, day0, day8, day14, and day28 with Bray-Curtis dissimilarity, Canberra distance and Jaccard Index. 
+
+<br><br>
+
+------
+
+
+
+## 4. Differential abundance 
+
+Used Maaslin2 to look for differentially abundant taxa between timepoints after BSS and day 0 using a linear model ("LM"). SubjectID and Sequence Run were incorporated as random effects.
+
+```{r results=FALSE, message=FALSE, warning=FALSE, cache=TRUE}
+
+library(Maaslin2)
+family<-tax_glom(phylo, "family")
+family_df<-phyloseq_to_df(family, addtax=F)
+rownames(family_df)<-family_df[,1]
+family_df[,1]<-NULL
+
+metadata<-data.frame(sample_data(family))
+
+subject_all = Maaslin2(
+  input_data = family_df,
+  input_metadata = metadata, 
+  output = "Timepoint_DAA_LM_Day0_AMR",
+  fixed_effects = c('Timepoint'), normalization="NONE", reference=c("Timepoint,Day 0"), random_effect=c("SubjectID", "SequenceRun"), analysis_method="LM", transform="LOG", plot_scatter = FALSE)
+
+ LM<-subject_all$results
+
+
+
+table<-as.data.frame(LM[,c("feature","value","coef","qval","N.not.zero")])
+table$OTU<-table$feature
+#write.csv(DAA_taxa, "DAA_species.csv")
+
+DAA_taxa<-merge.data.frame(table, taxa, by="OTU", all.x=TRUE, all.y=FALSE)
+
+
+```
+
+```{r}
+
+table_sub<- DAA_taxa %>% filter(qval < 0.05)
+table_sub2<- table_sub %>% filter(coef< -1)
+table_sub3<- table_sub %>% filter(coef > 1)
+table_sub4<-rbind(table_sub2, table_sub3)
+
+#write.csv(table_sub4, "DAA_AMRs.csv")
+
+table_sub4[table_sub4=="AMINOGLYCOSIDE_ AMINOGLYCOSIDE"] <- "AMINOGLYCOSIDE"
+table_sub4[table_sub4=="BETA_LACTAM_ BETA_LACTAM_ BETA_LACTAM"] <- "BETA_LACTAM"
+table_sub4[table_sub4=="BETA_LACTAM_ BETA_LACTAM"] <- "BETA_LACTAM"
+table_sub4[table_sub4=="TETRACYCLINE_ TETRACYCLINE"] <- "TETRACYCLINE"
+table_sub4[table_sub4=="ARSENIC"] <- "METALS"
+table_sub4[table_sub4=="COPPER_SILVER"] <- "METALS"
+table_sub4[table_sub4=="SILVER"] <- "METALS"
+table_sub4[table_sub4=="Unknown"] <- "Other"
+
+
+table_sub4$kingdom<- factor(table_sub4$kingdom,
+    levels = c('AMINOGLYCOSIDE','BETA_LACTAM','EFFLUX','GLYCOPEPTIDE','METALS','TETRACYCLINE','Other'), ordered = TRUE)
+
+
+table_sub4<- table_sub4 %>% mutate(class = gsub("_", " ", class))
+table_sub4<- table_sub4 %>% mutate(class = gsub("  ", ", ", class))
+
+table_sub5<-table_sub4[,c(1,4,5,7:10)] 
+names(table_sub5)[1]<-"gene"
+names(table_sub5)[4]<-"Class"
+names(table_sub5)[5]<-"Subclass"
+names(table_sub5)[6]<-"Gene"
+names(table_sub5)[7]<-"Description"
+
+table_sub5$qval<-formatC(table_sub5$qval, format = "e", digits = 2)
+table_sub5$coef<-round(table_sub5$coef, digits = 2)
+
+table_sub5 <- table_sub5[order(table_sub5$qval, decreasing=FALSE),]
+
+table_sub5[] <- lapply(table_sub5 , gsub, pattern = "_", replacement = " ")
+
+dust(table_sub5) %>%
+  kable(caption = "<strong>Table X. Differentially abundant AMR genes at day 2 compared to day 0.<strong>") %>% column_spec(column=3, width_min="5em", include_thead = T)  %>% column_spec(column=1, width_min="10em", include_thead = T) %>%
+  kable_styling(bootstrap_options = c("striped")) %>% 
+  scroll_box(width = "800px", height="650px", fixed_thead=T)
+
+
+library(downloadthis)
+table_sub5 %>%
+  download_this(
+    output_name = "Differentally abundant AMR genes",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+
+```
+
+
+<br><br>
+
+### 4.1 AMR barchart
+
+
+
+```{r}
+
+table_sub4$class<- factor(table_sub4$class, levels = table_sub4$class[order(table_sub4$kingdom, table_sub4$coef, decreasing=TRUE)])
+
+#nb.cols<-9
+#mycolors <- colorRampPalette(brewer.pal(11, "PiYG"))(nb.cols)
+mycolors<-c("#8E0152", "#CB3189","#FAD5E9","#DAF0BD","#599C29","#276419","#F7F7F7")
+
+```
+
+```{r}
+
+stacked_species<-ggplot(table_sub4, aes(x = coef, y = class, fill=kingdom)) +
+  geom_bar(stat = "identity",show.legend = TRUE) + xlab("Effect size") +scale_fill_manual(values=mycolors)+theme_classic()+geom_col(color="black")+theme(legend.position="bottom", legend.key.size = unit(0.4, "cm"), legend.text=element_text(size=9))+ylab(NULL)+guides(fill = guide_legend(nrow = 4))+labs(fill="Class")
+
+
+
+```
+
+```{r}
+mycolors<-c("#8E0152", "#CB3189","#FAD5E9","#DAF0BD","#599C29","#276419","#F7F7F7")
+```
+
+
+```{r}
+
+
+table_sub4$qval_adj<-(-log10(table_sub4$qval))
+
+bubble_species<-ggplot(table_sub4, aes(x=value, y=class, size = qval_adj)) + geom_point(alpha=1, aes(color=kingdom))+scale_size_area("p val", breaks = c(2,4,6, 8))+scale_color_manual(values=mycolors)+theme_void()+guides(color="none", fill="none")
+
+ggexport(stacked_species+bubble_species, filename="Stacked_plot_AMR_w_qval_v2.pdf",width=5, height=6)
+
+```
+
+
+
+```{r fig.cap="**Figure X. Differentially abundant AMR genes (effect size > 1 or <  - 1) 2 days (day 2) after compared to day before (day 0) BSS administration. Significance represents -log10 of adjusted p value after multiple comparisons (< 0.05). The greater the circle the more statistically significant.**", fig.width=5, fig.height=6}
+
+figure<-stacked_species + bubble_species
+figure
+
+
+library(downloadthis)
+figure %>%
+  download_this(
+    output_name = "Stacked_plot_AMRgenes",
+    output_extension = ".pdf",
+    button_label = "Download figure as .pdf",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-solid fa-image",
+    ggsave_args = list(height=6, width=5)
+  )
+
+
+```
+
+
+
