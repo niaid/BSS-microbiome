@@ -1,0 +1,1098 @@
+---
+title: "The gut microbiome after BSS dosing."
+author: "Lauren Krausfeldt"
+date: "2026-January-12"
+output:
+  html_document:
+    code_folding: hide
+    keep_md: yes
+    toc: true
+    toc_float: true
+    toc_depth: 6
+    theme: spacelab
+  pdf_document: default
+
+---
+
+```{=html}
+<style>
+body, p {
+  font-family: Arial;
+  text-align: justify;
+  font-size: 12pt;
+}
+</style>
+```
+```{=html}
+<style>
+caption {
+      color: black;
+      font-weight: bold;
+      text-align: justify;
+    }
+</style>
+```
+
+# Responders and Non-responders
+
+## 1. Methods
+
+Data was evaluated with fastqc and determined to have nextera
+transposase adapter contamination. Data was run through Nephele's QC
+pipeline for adapter trimming. Trimmed data was
+passed through WGSA2 pipeline in Nephele where it was decontaminated for human reads. 
+Read abundances were used in this analysis. 
+
+```{r message=FALSE, warning=FALSE, results='hide'}
+
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(stringr)
+library(phyloseq)
+library(metagMisc)
+library(vegan)
+library(tidyverse)
+library(ggpubr)
+library(ggpubr)
+library(rstatix)
+library(knitr)
+library(GUniFrac)
+library(ggrepel)
+library(MMUPHin)
+library(ggprism)
+library(ggbreak)
+library(microbial)
+library(devtools)
+library(pairwiseAdonis)
+library(RColorBrewer)
+library(scales)
+library(ggtext)
+library(pixiedust)
+library(downloadthis)
+library(kableExtra)
+library(veganEx)
+library(Maaslin2)
+```
+
+## 2. Data processing 
+
+### Import data and create phyloseq object. 
+
+
+```{r warning=FALSE, message=FALSE}
+metadata<-read.csv("BSS_metadata update10FEB2025-LKedit.csv", row.names=1, header=TRUE)
+metadata<-as.data.frame(t(metadata))
+metadata[, c("ATCCMSA2002control_P1","ATCCMSA2002control_P2","NegativeControl","NegativeControl_P2")] <- NULL
+metadata<-as.data.frame(t(metadata))
+
+metadata$Age<-as.numeric(metadata$Age)
+metadata$Day.of.sample.relative.to.BSS.administration<-as.numeric(metadata$Day.of.sample.relative.to.BSS.administration)
+metadata$Day<-as.numeric(metadata$Day)
+metadata$Calculated.BMI<-as.numeric(metadata$Calculated.BMI)
+metadata$Days_colonoscopy_bl<-as.numeric(metadata$Days_colonoscopy_bl)
+metadata$Days_colonoscopy_day0<-as.numeric(metadata$Days_colonoscopy_day0)
+metadata$Duration.Darkened.Stool<-as.numeric(metadata$Duration.Darkened.Stool)
+metadata$Hours.for.stool.sample<-as.numeric(metadata$Hours.for.stool.sample)
+metadata$Days.for.stool.sample<-as.numeric(metadata$Days.for.stool.sample)
+
+
+
+
+```
+
+```{r}
+
+data<-read.csv("rarefied_bacterial_table_not_batch_filtered_prev.csv", row.names=1, header=TRUE)
+
+taxa <- data[, c("kingdom","phylum","class","order","family","genus","species","OTU")]
+data[, c("kingdom","phylum","class","order","family","genus","species","OTU","ATCCMSA2002control_P1","ATCCMSA2002control_P2","NegativeControl","NegativeControl_P2")] <- NULL
+
+otu<-otu_table(data, taxa_are_rows=TRUE)
+tax<-tax_table(as.matrix(taxa))
+meta<-sample_data(metadata)
+dada2_rare_0<-phyloseq(otu, meta, tax)
+```
+
+
+### Calculating species alpha diversity
+
+```{r}
+
+
+phy_alphadiv <- estimate_richness(dada2_rare_0)
+
+otu_table <- otu_table(t(dada2_rare_0))
+evenness<- diversity(otu_table)/log(specnumber(otu_table))
+chao1 <- t(estimateR(otu_table))[,2]
+all_alphadivs <- data.frame(phy_alphadiv, evenness, chao1)
+update_sample_data <- merge(sample_data(dada2_rare_0), all_alphadivs, by=0)
+rownames(update_sample_data) <- update_sample_data$Row.names
+update_sample_data$Row.names <- NULL
+sample_data(dada2_rare_0) <- update_sample_data
+metadata<-update_sample_data
+
+
+rarefied<-phyloseq_to_df(dada2_rare_0, addtax=F)
+rownames(rarefied)<-rarefied[,1]
+rarefied<-dplyr::select(rarefied, -c("OTU"))
+
+genus<-tax_glom(dada2_rare_0, "genus")
+
+```
+
+### Confounder stats 
+
+```{r}
+
+metadata_baseline<-metadata %>% filter(Timepoint == "Day 2")
+
+chisq.test(metadata_baseline$Colonoscopy, metadata_baseline$Day2_obs)
+
+chisq.test(metadata_baseline$SequenceRun, metadata_baseline$Day2_obs)
+
+chisq.test(metadata_baseline$Age, metadata_baseline$Day2_obs)
+
+chisq.test(metadata_baseline$Race, metadata_baseline$Day2_obs)
+
+chisq.test(metadata_baseline$Ethnicity, metadata_baseline$Day2_obs)
+
+chisq.test(metadata_baseline$Sex, metadata_baseline$Day2_obs)
+
+chisq.test(metadata_baseline$Day2_obs, metadata_baseline$Classification.by.BMI)
+
+chisq.test(metadata_baseline$Day2_obs, metadata_baseline$DNAextract)
+
+chisq.test(metadata_baseline$Day2_obs, metadata_baseline$Darkened.Stool)
+
+chisq.test(metadata_baseline$Day2_obs, metadata_baseline$Duration.Darkened.Stool)
+
+metadata_baseline$Duration.Darkened.Stool<-as.numeric(metadata_baseline$Duration.Darkened.Stool)
+chisq.test(metadata_baseline$Day2_obs, metadata_baseline$Duration.Darkened.Stool)
+
+chisq.test(metadata_baseline$Day2_obs, metadata_baseline$Diarrhea.Loose.Stool)
+
+metadata_baseline$Days.for.stool.sample<-as.numeric(metadata_baseline$Days.for.stool.sample)
+chisq.test(metadata_baseline$Day2_obs, metadata_baseline$Days.for.stool.sample)
+
+metadata_baseline$Hours.for.stool.sample<-as.numeric(metadata_baseline$Hours.for.stool.sample)
+chisq.test(metadata_baseline$Day2_obs, metadata_baseline$Hours.for.stool.sample)
+
+chisq.test(metadata_baseline$Day2_obs, metadata_baseline$Diarrhea.Loose.Stool)
+
+fisher.test(metadata_baseline$Colonoscopy, metadata_baseline$Day2_obs)
+
+fisher.test(metadata_baseline$SequenceRun, metadata_baseline$Day2_obs)
+
+fisher.test(metadata_baseline$Age, metadata_baseline$Day2_obs)
+
+fisher.test(metadata_baseline$Race, metadata_baseline$Day2_obs)
+
+fisher.test(metadata_baseline$Ethnicity, metadata_baseline$Day2_obs)
+
+fisher.test(metadata_baseline$Sex, metadata_baseline$Day2_obs)
+
+fisher.test(metadata_baseline$Day2_obs, metadata_baseline$Classification.by.BMI)
+
+fisher.test(metadata_baseline$Day2_obs, metadata_baseline$DNAextract)
+
+fisher.test(metadata_baseline$Day2_obs, metadata_baseline$Darkened.Stool)
+
+fisher.test(metadata_baseline$Day2_obs, metadata_baseline$Duration.Darkened.Stool)
+
+fisher.test(metadata_baseline$Day2_obs, metadata_baseline$Diarrhea.Loose.Stool)
+
+fisher.test(metadata_baseline$Day2_obs, metadata_baseline$Days.for.stool.sample)
+
+fisher.test(metadata_baseline$Day2_obs, metadata_baseline$Hours.for.stool.sample)
+
+```
+
+### Confounder Graphs
+
+```{r}
+metadata_baseline <- metadata_baseline %>% filter(Day2_obs != "N/A")
+
+table_data <- as.data.frame(table(metadata_baseline$Day2_obs, metadata_baseline$Colonoscopy))
+
+colon<-ggplot(table_data, aes(x = Var1, y = Freq, fill = Var2)) +
+  geom_bar(stat = "identity", position = "dodge", color="black") +
+  labs(title = "Colonoscopy",
+       x = NULL,
+       y = "Count") +theme(axis.text.x=element_text(size=10, angle = 45, hjust = 1), axis.text.y=element_text(size=10), axis.title=element_text(size=12), plot.title = element_text(size=12)) +scale_fill_brewer(type="qual", palette = "Set1")
+
+
+#ggexport(colon, filename="Colon.pdf", width=3.5, height=4)
+```
+
+
+```{r}
+table_data <- as.data.frame(table(metadata_baseline$Day2_obs, metadata_baseline$Classification.by.BMI))
+
+bmi<-ggplot(table_data, aes(x = Var1, y = Freq, fill = Var2)) +
+  geom_bar(stat = "identity", position = "dodge", color="black") +
+  labs(title = "BMI",
+       x = NULL,
+       y = "Count") +theme(axis.text.x=element_text(size=10, angle = 45, hjust = 1), axis.text.y=element_text(size=10), axis.title=element_text(size=12), plot.title = element_text(size=12)) +scale_fill_brewer(type="qual", palette = "Set2")
+
+
+#ggexport(bmi, filename="BMI.pdf", width=4, height=4)
+
+```
+
+
+```{r}
+
+table_data <- as.data.frame(table(metadata_baseline$Day2_obs, metadata_baseline$SequenceRun))
+
+run<-ggplot(table_data, aes(x = Var1, y = Freq, fill = Var2)) +
+  geom_bar(stat = "identity", position = "dodge", color="black") +
+  labs(title = "Sequence Run",
+       x = NULL,
+       y = "Count") +theme(axis.text.x=element_text(size=10, angle = 45, hjust = 1), axis.text.y=element_text(size=10), axis.title=element_text(size=12), plot.title = element_text(size=12)) +scale_fill_brewer(type="qual", palette = "Pastel2")
+
+
+#ggexport(run, filename="Run.pdf", width=6, height=4)
+
+```
+
+
+```{r}
+
+
+table_data <- as.data.frame(table(metadata_baseline$Day2_obs, metadata_baseline$DNAextract))
+
+DNA<-ggplot(table_data, aes(x = Var1, y = Freq, fill = Var2)) +
+  geom_bar(stat = "identity", position = "dodge", color="black") +
+  labs(title = "DNA extraction",
+       x = NULL,
+       y = "Count") +theme(axis.text.x=element_text(size=10, angle = 45, hjust = 1), axis.text.y=element_text(size=10), axis.title=element_text(size=12), plot.title = element_text(size=12)) +scale_fill_brewer(type="qual", palette = "Pastel2")
+#ggexport(DNA, filename="DNA.pdf", width=3, height=4)
+```
+
+
+```{r}
+
+table_data <- as.data.frame(table(metadata_baseline$Day2_obs, metadata_baseline$Sex))
+
+sex<-ggplot(table_data, aes(x = Var1, y = Freq, fill = Var2)) +
+  geom_bar(stat = "identity", position = "dodge", color="black") +
+  labs(title = "Sex",
+       x = NULL,
+       y = "Count") +theme(axis.text.x=element_text(size=10, angle = 45, hjust = 1), axis.text.y=element_text(size=10), axis.title=element_text(size=12), plot.title = element_text(size=12)) +scale_fill_brewer(type="qual", palette = "Spectral")
+
+#ggexport(sex, filename="sex.pdf", width=3, height=4)
+```
+
+
+```{r}
+
+table_data <- as.data.frame(table(metadata_baseline$Day2_obs, metadata_baseline$Ethnicity))
+ethnicity<-ggplot(table_data, aes(x = Var1, y = Freq, fill = Var2)) +
+  geom_bar(stat = "identity", position = "dodge", color="black") +
+  labs(title = "Ethnicity",
+       x = NULL,
+       y = "Count") +theme(axis.text.x=element_text(size=10, angle = 45, hjust = 1), axis.text.y=element_text(size=10), axis.title=element_text(size=12), plot.title = element_text(size=12)) + scale_fill_brewer(type="qual", palette = "Set3")
+#ggexport(ethnicity, filename="ethnicity.pdf", width=4, height=4)
+```
+
+
+```{r}
+table_data <- as.data.frame(table(metadata_baseline$Day2_obs, metadata_baseline$Race))
+race<-ggplot(table_data, aes(x = Var1, y = Freq, fill = Var2)) +
+  geom_bar(stat = "identity", position = "dodge", color="black") +
+  labs(title = "Race",
+       x = NULL,
+       y = "Count") +theme(axis.text.x=element_text(size=10, angle = 45, hjust = 1), axis.text.y=element_text(size=10), axis.title=element_text(size=12), plot.title = element_text(size=12)) +scale_fill_brewer(type="qual", palette = "Set3")
+
+#ggexport(race, filename="race.pdf", width=6, height=4)
+```
+
+
+```{r}
+age<-ggplot(metadata_baseline, aes(x = Day2_obs, y = Age, color=Age)) +
+  geom_point(stat = "identity", position = position_jitter(width = 0.2, height=0, seed=1), size=4) +
+  labs(title = "Age",
+       x = NULL,
+       y = "Count") + theme(axis.text.x=element_text(size=10, angle = 45, hjust = 1), axis.text.y=element_text(size=10), axis.title=element_text(size=12), plot.title = element_text(size=12)) 
+
+#ggexport(age, filename="age.pdf", width=3, height=4)
+
+```
+
+```{r}
+table_data <- as.data.frame(table(metadata_baseline$Day2_obs, metadata_baseline$Darkened.Stool))
+
+dark<-ggplot(table_data, aes(x = Var1, y = Freq, fill = Var2)) +
+  geom_bar(stat = "identity", position = "dodge", color="black") +
+  labs(title = "Darkened Stool",
+       x = NULL,
+       y = "Count") +theme(axis.text.x=element_text(size=10, angle = 45, hjust = 1), axis.text.y=element_text(size=10), axis.title=element_text(size=12), plot.title = element_text(size=12)) +scale_fill_brewer(type="qual", palette = "PuOr")
+
+#ggexport(dark, filename="DarkenedStool.pdf", width=3, height=4)
+```
+
+```{r}
+
+
+dark_dur<-ggplot(metadata_baseline, aes(x = Day2_obs, y = Duration.Darkened.Stool, color=Duration.Darkened.Stool)) +
+  geom_point(stat = "identity", size=4, position = position_jitter(width = 0.2, height=0, seed=1)) +
+  labs(title = "Duration of Darkened Stool",
+       x = NULL,
+       y = "Count") + theme(axis.text.x=element_text(size=10, angle = 45, hjust = 1), axis.text.y=element_text(size=10), axis.title=element_text(size=12), plot.title = element_text(size=12)) +labs(color="Dur") 
+
+#ggexport(dark_dur, filename="DarkenedStoolDuration.pdf", width=3, height=4)
+```
+
+```{r}
+table_data <- as.data.frame(table(metadata_baseline$Day2_obs, metadata_baseline$Diarrhea.Loose.Stool))
+
+diarrhea<-ggplot(table_data, aes(x = Var1, y = Freq, fill = Var2)) +
+  geom_bar(stat = "identity", position = "dodge", color="black") +
+  labs(title = "Diarrhea",
+       x = NULL,
+       y = "Count") +theme(axis.text.x=element_text(size=10, angle = 45, hjust = 1), axis.text.y=element_text(size=10), axis.title=element_text(size=12), plot.title = element_text(size=12)) +scale_fill_brewer(type="qual", palette = "PiYG")
+
+#ggexport(diarrhea, filename="Diarrhea.pdf", width=3, height=4)
+
+```
+
+```{r}
+
+days<-ggplot(metadata_baseline, aes(x = Day2_obs, y = Days.for.stool.sample, color=Days.for.stool.sample)) +
+  geom_point(stat = "identity", size=4,position = position_jitter(width = 0.4, height=0, seed=1))  +
+  labs(title = "Days post-BSS",
+       x = NULL,
+       y = "Count") + theme(axis.text.x=element_text(size=10, angle = 45, hjust = 1), axis.text.y=element_text(size=10), axis.title=element_text(size=12), plot.title = element_text(size=12)) +labs(color="Days") 
+
+#ggexport(days, filename="Days.for.stool.sample.pdf", width=4, height=4)
+```
+
+```{r}
+hours<-ggplot(metadata_baseline, aes(x = Day2_obs, y = Hours.for.stool.sample, color=Hours.for.stool.sample)) +
+  geom_point(stat = "identity", size=4, position = position_jitter(width = 0.2, height=0, seed=1))  +
+  labs(title = "Hours post-BSS",
+       x = NULL,
+       y = "Count") + theme(axis.text.x=element_text(size=10, angle = 45, hjust = 1), axis.text.y=element_text(size=10), axis.title=element_text(size=12), plot.title = element_text(size=12)) +labs(color="Days") 
+
+#ggexport(hours, filename="Hours.for.stool.sample.pdf", width=3, height=4)
+```
+
+### PERMANOVA 
+
+```{r}
+
+day2_phylo<-subset_samples(dada2_rare_0, Timepoint == "Day 2")
+
+day2_metadata<-data.frame(sample_data(day2_phylo))
+```
+
+#### Motility and Darkened Stool
+
+```{r}
+adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs, by="margin")
+
+adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Darkened.Stool+sample_data(day2_phylo)$Day2_obs, by="terms")
+```
+
+
+```{r}
+
+adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs+sample_data(day2_phylo)$Darkened.Stool, by="margin")
+
+adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs*sample_data(day2_phylo)$Darkened.Stool, by="margin")
+
+```
+
+
+```{r}
+
+adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs+sample_data(day2_phylo)$Diarrhea.Loose.Stool, by="margin")
+
+adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs*sample_data(day2_phylo)$Diarrhea.Loose.Stool, by="margin")
+```
+
+
+```{r}
+
+adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs+sample_data(day2_phylo)$Days.for.stool.sample, by="margin")
+
+adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs*sample_data(day2_phylo)$Days.for.stool.sample, by="margin")
+
+```
+
+
+```{r}
+adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs+sample_data(day2_phylo)$Hours.for.stool.sample, by="margin")
+
+adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs*sample_data(day2_phylo)$Hours.for.stool.sample, by="margin")
+```
+
+
+```{r}
+
+darkened<-subset_samples(day2_phylo, Duration.Darkened.Stool !="NA")
+
+adonis2(phyloseq::distance(darkened, method="bray") ~ sample_data(darkened)$Day2_obs+sample_data(darkened)$Duration.Darkened.Stool, by="margin")
+
+adonis2(phyloseq::distance(darkened, method="bray") ~ sample_data(darkened)$Day2_obs*sample_data(darkened)$Duration.Darkened.Stool, by="terms")
+
+adonis2(phyloseq::distance(darkened, method="bray") ~ sample_data(darkened)$Day2_obs*sample_data(darkened)$Duration.Darkened.Stool, by="margin")
+
+
+```
+
+
+#### Ethnicity 
+
+
+```{r}
+
+response<-adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs, by="margin")
+
+response<-response[1,c(3,4,5)]
+response$Comparison<-"Response"
+
+con<-adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs+sample_data(day2_phylo)$Ethnicity, by="margin")
+
+int<-adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs*sample_data(day2_phylo)$Ethnicity, by="terms")
+
+
+con<-con[1,c(3,4,5)]
+int<-int[3,c(3,4,5)]
+con$Comparison<-"Effect"
+int$Comparison<-"Interaction"
+result<-rbind(response, con, int)
+
+rownames(result)<-result$Comparison
+
+kable(result[,c(1,2,3)], caption="Table X. Potential effect and interaction of response and ethnicity.") %>% kable_styling(position="left") %>% scroll_box(width="500px")
+
+```
+
+<br><br>
+
+#### Colonoscopy
+
+
+```{r}
+
+con<-adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs+sample_data(day2_phylo)$Colonoscopy., by="margin")
+
+int<-adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs*sample_data(day2_phylo)$Colonoscopy., by="terms")
+
+con<-con[1,c(3,4,5)]
+int<-int[3,c(3,4,5)]
+con$Comparison<-"Effect"
+int$Comparison<-"Interaction"
+result<-rbind(response, con, int)
+
+rownames(result)<-result$Comparison
+
+kable(result[,c(1,2,3)], caption="Table X. Potential effect and interaction of response and colonoscopy.") %>% kable_styling(position="left") %>% scroll_box(width="500px")
+
+
+
+```
+
+<br><br>
+
+
+#### Sex
+
+```{r}
+
+
+con<-adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs+sample_data(day2_phylo)$Sex, by="margin")
+
+int<-adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs*sample_data(day2_phylo)$Sex, by="terms")
+
+con<-con[1,c(3,4,5)]
+int<-int[3,c(3,4,5)]
+con$Comparison<-"Effect"
+int$Comparison<-"Interaction"
+result<-rbind(response, con, int)
+
+rownames(result)<-result$Comparison
+
+kable(result[,c(1,2,3)], caption="Table X. Potential effect and interaction of response and sex.") %>% kable_styling(position="left") %>% scroll_box(width="500px")
+
+```
+
+<br><br>
+
+#### BMI
+
+```{r}
+
+
+con<-adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs+sample_data(day2_phylo)$Calculated.BMI, by="margin")
+
+int<-adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs*sample_data(day2_phylo)$Calculated.BMI, by="terms")
+
+con<-con[1,c(3,4,5)]
+int<-int[3,c(3,4,5)]
+con$Comparison<-"Effect"
+int$Comparison<-"Interaction"
+result<-rbind(response, con, int)
+
+rownames(result)<-result$Comparison
+
+kable(result[,c(1,2,3)], caption="Table X. Potential effect and interaction of response and BMI.") %>% kable_styling(position="left") %>% scroll_box(width="500px")
+
+```
+
+<br><br>
+
+#### SequenceRun
+
+```{r}
+
+
+
+con<-adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs+sample_data(day2_phylo)$SequenceRun, by="margin")
+
+int<-adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs*sample_data(day2_phylo)$SequenceRun, by="terms")
+
+con<-con[1,c(3,4,5)]
+int<-int[3,c(3,4,5)]
+con$Comparison<-"Effect"
+int$Comparison<-"Interaction"
+result<-rbind(response, con, int)
+
+rownames(result)<-result$Comparison
+
+kable(result[,c(1,2,3)], caption="Table X. Potential effect and interaction of response and sequence run.") %>% kable_styling(position="left") %>% scroll_box(width="500px")
+
+
+```
+
+<br><br>
+
+#### DNA extraction
+
+```{r}
+
+
+con<-adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs+sample_data(day2_phylo)$DNAextract, by="margin")
+
+int<-adonis2(phyloseq::distance(day2_phylo, method="bray") ~ sample_data(day2_phylo)$Day2_obs*sample_data(day2_phylo)$DNAextract, by="terms")
+
+con<-con[1,c(3,4,5)]
+int<-int[3,c(3,4,5)]
+con$Comparison<-"Effect"
+int$Comparison<-"Interaction"
+result<-rbind(response, con, int)
+
+rownames(result)<-result$Comparison
+
+kable(result[,c(1,2,3)], caption="Table X. Potential effect and interaction of response and DNA extraction.") %>% kable_styling(position="left") %>% scroll_box(width="500px")
+
+
+```
+
+
+## 3. Common taxa between response
+
+### Responders
+
+
+```{r warning=FALSE, message=FALSE, results=FALSE}
+
+responder<-subset_samples(genus, Day2_obs == "Responder")
+responder_df<-phyloseq_to_df(responder, addtax=T)
+rownames(responder_df)<-responder_df[,"genus"]
+responder_df[,c("OTU","kingdom","phylum","order","family","class","species","genus","OTU.1")]<-NULL
+responder_df<-as.data.frame(t(responder_df))
+
+res_metadata<-metadata %>% filter(Day2_obs=="Responder")
+
+
+subject_all = Maaslin2(
+  input_data = responder_df,
+  input_metadata = res_metadata, 
+  output = "Timepoint_DAA_LM_res_genus",
+  fixed_effects = c('Timepoint'), normalization="NONE", reference=c("Timepoint,Day 0"), random_effect=c("SubjectID", "SequenceRun"), analysis_method="LM", transform="LOG", plot_scatter = FALSE)
+
+LM<-subject_all$results
+
+
+## re-install maaslin2 to fix package error. Log transform with linear model? 
+
+table<-as.data.frame(LM[,c("feature","value","coef","qval","N.not.zero")])
+
+table_sub<- table %>% filter(qval < 0.20)
+table_sub2<- table_sub %>% filter(coef< -1)
+table_sub3<- table_sub %>% filter(coef > 1)
+table_sub4_day0<-rbind(table_sub2, table_sub3)
+
+table_day2<- table_sub4_day0 %>% filter(value=="Day 2")
+table_day8<- table_sub4_day0 %>% filter(value=="Day 8")
+table_day14<- table_sub4_day0 %>% filter(value=="Day 14")
+table_day28<- table_sub4_day0 %>% filter(value=="Day 28")
+
+day8_14<-merge.data.frame(table_day8, table_day14, by="feature", all.x=FALSE, all.y=FALSE)
+day_8_14_28<-merge.data.frame(day8_14, table_day28, by="feature", all.x=FALSE, all.y=FALSE)
+
+day2_day8<-merge.data.frame(table_day2, table_day8, by="feature", all.x=FALSE, all.y=FALSE)
+
+day2_day14<-merge.data.frame(table_day2, table_day14, by="feature", all.x=FALSE, all.y=FALSE)
+
+day2_day28<-merge.data.frame(table_day2, table_day28, by="feature", all.x=FALSE, all.y=FALSE)
+
+
+day2_day8_day14<-merge.data.frame(day2_day8, table_day14, by="feature", all.x=FALSE, all.y=FALSE)
+
+day2_day8_day14_day28<-merge.data.frame(day2_day8_day14, table_day28, by="feature", all.x=FALSE, all.y=FALSE)
+
+#day2_8_taxa<-merge.data.frame(day2_day8, taxa_uniq, by="genus", all.x=TRUE, all.y=FALSE)
+```
+
+### Non-responders
+
+```{r warning=FALSE, message=FALSE, results=FALSE}
+
+non<-subset_samples(genus, Day2_obs == "Non-responder")
+non_df<-phyloseq_to_df(non, addtax=T)
+
+rownames(non_df)<-non_df[,"genus"]
+non_df[,c("OTU","kingdom","phylum","order","family","class","species","genus","OTU.1")]<-NULL
+non_df<-non_df[rowSums(non_df[])>0,]
+
+non_metadata<-metadata %>% filter(Day2_obs=="Non-responder")
+
+non_df<-as.data.frame(t(non_df))
+
+
+subject_all = Maaslin2(
+  input_data = non_df,
+  input_metadata = non_metadata, 
+  output = "Timepoint_DAA_LM_res_genus",
+  fixed_effects = c('Timepoint'), normalization="NONE", reference=c("Timepoint,Day 0"), random_effect=c("SubjectID", "SequenceRun"), analysis_method="LM", transform="LOG", plot_scatter = FALSE)
+
+LM_non_genus<-subject_all$results
+
+
+## re-install maaslin2 to fix package error. Log transform with linear model? 
+
+table<-as.data.frame(LM_non_genus[,c("feature","value","coef","qval","N.not.zero")])
+
+table_sub<- table %>% filter(qval < 0.20)
+table_sub2<- table_sub %>% filter(coef< -1)
+table_sub3<- table_sub %>% filter(coef > 1)
+non_day0<-rbind(table_sub2, table_sub3)
+non_day2<-non_day0 %>% filter(value=="Day 2")
+
+```
+
+
+```{r}
+
+
+both<-merge.data.frame(table_day2, non_day2, by="feature", all.x=FALSE, all.y=FALSE)
+both$genus<-both$feature
+
+both1<-both %>% filter(coef.y > 1.5)
+both2<-both %>% filter(coef.y < -1.5)
+
+both<-rbind(both1, both2)
+```
+
+
+
+```{r warning=FALSE, message=FALSE, results=FALSE}
+
+genus_df<-phyloseq_to_df(genus, addtax=T)
+rownames(genus_df)<-genus_df[,"genus"]
+genus_df[,c("OTU","kingdom","phylum","order","family","class","species","genus","OTU.1")]<-NULL
+
+
+subject_all = Maaslin2(
+  input_data = genus_df,
+  input_metadata = metadata, 
+  output = "Timepoint_DAA_LM_Day0_genus",
+  fixed_effects = c('Timepoint'), normalization="NONE", reference=c("Timepoint,Day 0"), random_effect=c("SubjectID", "SequenceRun"), analysis_method="LM", transform="LOG", plot_scatter = FALSE)
+
+LM<-subject_all$results
+
+
+## re-install maaslin2 to fix package error. Log transform with linear model? 
+
+table<-as.data.frame(LM[,c("feature","value","coef","qval","N.not.zero")])
+
+table_sub<- table %>% filter(qval < 0.05)
+table_sub2<- table_sub %>% filter(coef< -1)
+table_sub3<- table_sub %>% filter(coef > 1)
+table_sub4_day0<-rbind(table_sub2, table_sub3)
+
+all_day2<-table_sub4_day0 %>% filter(value == "Day 2")
+all_day2$genus<-all_day2$feature
+```
+
+
+```{r}
+
+features<-data.frame(both$feature)
+features$genus<-features$both.feature
+
+final<-merge.data.frame(features, all_day2, by="genus", all.x=TRUE, all.y=FALSE)
+
+genus_df$genus<-rownames(genus_df)
+
+merged<-merge.data.frame(genus_df, final, by="genus", all.x=FALSE, all.y=TRUE)
+
+rownames(merged)<-merged[,1]
+merged[,1]<-NULL
+merged2<-merged[,1:124]
+merged2<-as.data.frame(t(merged2))
+merged2$Sample<-rownames(merged2)
+
+merged<-merge.data.frame(merged2, metadata, by="Sample", all.x=FALSE, all.y=FALSE)
+
+merged3<-merged %>% filter(Day2_obs == "Responder")
+merged4<-merged %>% filter(Day2_obs == "Non-responder")
+
+merged5<-rbind(merged3, merged4)
+
+rownames(merged5) <- merged5[,1]
+genes<-merged5[,2:19]
+gene_names<-colnames(genes)
+
+names(final)[6]<-"p.adj"
+final<-data.frame(final)
+final$group<-final$feature
+
+final$group1<-final$value
+final$group2<-"Day 0"
+
+
+```
+
+### Plotting taxa from both groups
+
+```{r message=FALSE, warning=FALSE}
+
+max_values <- list()
+
+# Loop through each gene name
+for (gene in gene_names) { 
+  max_values[[gene]]<- max(merged[[gene]], na.rm = TRUE)  # Calculate max and handle NAs if any
+}
+
+max_values_df <- data.frame(
+  gene = names(max_values),
+  max_value = unlist(max_values)
+)
+
+max_values_df$max_values_add<-max_values_df$max_value
+max_values_df$y.position<-log(max_values_df$max_values_add)*0.45
+max_values_df$ymax<-(max_values_df$max_value*10) + max_values_df$max_value
+
+max_values_df$group<-max_values_df$gene  
+all_DAA_max<-merge.data.frame(max_values_df, final, by="group", all.x=TRUE, all.y=TRUE)
+all_DAA_max$y.position<-as.numeric(all_DAA_max$y.position)
+all_DAA_max$p.adj<-round(all_DAA_max$p.adj, digits=3)
+all_DAA_max$bracket1<-all_DAA_max$y.position*0.1
+all_DAA_max$bracket2<-all_DAA_max$y.position*0.4
+all_DAA_max$bracket3<-all_DAA_max$y.position*0.6
+all_DAA_max$bracket4<-all_DAA_max$y.position*0.8
+
+all_DAA_max$species<-all_DAA_max$group
+
+split_data <- split(all_DAA_max, f = all_DAA_max$group)
+
+plots2<-list()
+
+```
+
+
+```{r message=FALSE, warning=FALSE}
+
+for (i in gene_names) { 
+
+plot<-ggplot(merged5, aes_string(x="Timepoint", y=i))+geom_violin()+geom_point(position =  position_jitter(width = 0.3, height=0, seed=1), size=3, aes(color=Day2_obs))+theme_bw() + ylab(i) + xlab(NULL) +theme(plot.margin = margin(c(20,10,20,10), 'cm'), axis.title.x=element_blank(), axis.text.x=element_text(size=15, angle=45, hjust=1), axis.text.y=element_text(size=15),  axis.title.y=element_text(size=15), plot.title = element_text(size=14), legend.title=element_text(size=20), legend.text=element_text(size=20)) + ggtitle(i)+labs(x=NULL, y="Abundance") +stat_summary(fun.y=mean, geom="crossbar", size=0.5, color="black")  + scale_y_continuous(limits=c(NA, split_data[[i]]$ymax), trans="log10")+scale_x_discrete(limits=c("Baseline","Day 0", "Day 2","Day 8","Day 14","Day 28"))+scale_colour_manual(values = c("#6baed6","#006d2c"))
+
+
+plot2<-plot + stat_pvalue_manual(split_data[[i]][1,], label = "q={p.adj}", xmin = "group1", xmax = 'group2', ymax='ymax', bracket.nudge.y = 'bracket1')
+
+plots2[[i]] <- plot2
+
+}
+
+
+
+
+```
+
+
+```{r warning=FALSE, message=FALSE, fig.width=16, fig.height=24}
+
+FigureS3<-ggarrange(plotlist = plots2, nrow=6, ncol=3, common.legend=TRUE)
+#ggexport(FigureS3, filename="FigureS3_BSS_draft_v4.pdf", width=16, height=24)
+
+FigureS3
+
+
+library(downloadthis)
+FigureS3 %>%
+  download_this(
+    output_name = "common_bacterial_genera",
+    output_extension = ".pdf",
+    button_label = "Download figure as .pdf",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-solid fa-image",
+    ggsave_args = list(height=24, width=16)
+  )
+
+```
+
+## 4. Changes over time in responders 
+
+### Day 8
+
+```{r}
+
+table_sub<- table_day8 %>% filter(qval < 0.05)
+table_sub2<- table_sub %>% filter(coef< -1)
+table_sub3<- table_sub %>% filter(coef > 1)
+table_day8<-rbind(table_sub2, table_sub3)
+
+taxa[,c("species","OTU")]<-NULL
+taxa_uniq<-data.frame(unique(taxa))
+table_day8$genus<-table_day8$feature
+DAA_taxa<-merge.data.frame(table_day8, taxa_uniq, by="genus", all.x=TRUE, all.y=FALSE)
+
+
+```
+
+```{r}
+
+DAA_taxa$phylum<- factor(DAA_taxa$phylum,
+    levels = c('Acidobacteriota','Actinomycetota','Bacillota','Candidatus_Thermoplasmatota','Planctomycetota','Pseudomonadota'), ordered = TRUE)
+
+
+
+```
+
+```{r}
+
+mycolors <- c("#deebf7","#A6CEE3", "#2D82AF", "#006d2c", "#FE982C", "#D9A295")
+
+DAA_taxa<- DAA_taxa %>% mutate(updated_text = gsub("_", " ", genus))
+
+
+
+DAA_taxa$updated_text<- factor(DAA_taxa$updated_text, levels = DAA_taxa$updated_text[order(DAA_taxa$phylum, DAA_taxa$coef, decreasing=TRUE)])
+
+stacked_species<-ggplot(DAA_taxa, aes(x = coef, y = updated_text, fill=phylum)) +
+  geom_bar(stat = "identity",show.legend = TRUE) + xlab("Effect size") +scale_fill_manual(values=mycolors)+theme_classic()+geom_col(color="black")+theme(legend.position="right") +ylab(NULL)+guides(fill = guide_legend(nrow = 10))+scale_x_continuous(limits=c(-3,3))
+
+
+#stacked_species
+#ggexport(stacked_species, filename="Stacked_plot_species.pdf", width=6, height=9)
+
+DAA_taxa$qval_adj<-(-log10(DAA_taxa$qval))
+
+bubble_species<-ggplot(DAA_taxa, aes(x=value, y=updated_text, size = qval_adj)) + geom_point(alpha=1, aes(color=phylum))+scale_size(range=c(0.01,4), "Significance")+scale_color_manual(values=mycolors)+theme_void()+guides(color="none", fill="none")
+
+#bubble_species
+```
+
+<br><br>
+
+
+```{r fig.cap="**Figure X. Differentially abundant genera (effect size > 1 or <  - 1) colored by phylum 8 days (day 2) after compared to day before (day 0) BSS administration. Significance represents -log of adjusted p value after multiple comparisons (< 0.05). The greater the circle the more statistically significant.**", fig.height=4, fig.width=8}
+
+figure_day8<-stacked_species+bubble_species
+
+figure_day8
+
+FigureSX<-figure_day8
+
+library(downloadthis)
+figure_day8 %>%
+  download_this(
+    output_name = "Stacked_plot_bacterial_genera",
+    output_extension = ".pdf",
+    button_label = "Download figure as .pdf",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-solid fa-image",
+    ggsave_args = list(height=4, width=8)
+  )
+
+
+
+#ggexport(stacked_species+bubble_species, filename="Stacked_plot_genus_w_qval_day8.pdf",width=8, height=3.5)
+
+
+
+```
+
+
+### Day 14
+
+
+
+```{r}
+
+table_sub<- table_day14 %>% filter(qval < 0.05)
+table_sub2<- table_sub %>% filter(coef< -1)
+table_sub3<- table_sub %>% filter(coef > 1)
+table_day14<-rbind(table_sub2, table_sub3)
+
+taxa[,c("species","OTU")]<-NULL
+taxa_uniq<-data.frame(unique(taxa))
+table_day14$genus<-table_day14$feature
+DAA_taxa<-merge.data.frame(table_day14, taxa_uniq, by="genus", all.x=TRUE, all.y=FALSE)
+
+```
+
+
+```{r}
+
+DAA_taxa$phylum<- factor(DAA_taxa$phylum,
+    levels = c('Acidobacteriota','Actinomycetota','Bacillota','Chloroflexota','Euryarchaeota','Pseudomonadota'), ordered = TRUE)
+
+```
+
+```{r}
+
+mycolors <- c("#deebf7","#A6CEE3", "#2D82AF","aquamarine4","#fee0d2","#D9A295")
+
+DAA_taxa<- DAA_taxa %>% mutate(updated_text = gsub("_", " ", genus))
+
+
+
+DAA_taxa$updated_text<- factor(DAA_taxa$updated_text, levels = DAA_taxa$updated_text[order(DAA_taxa$phylum, DAA_taxa$coef, decreasing=TRUE)])
+
+stacked_species<-ggplot(DAA_taxa, aes(x = coef, y = updated_text, fill=phylum)) +
+  geom_bar(stat = "identity",show.legend = TRUE) + xlab("Effect size") +scale_fill_manual(values=mycolors)+theme_classic()+geom_col(color="black")+theme(legend.position="right") +ylab(NULL)+guides(fill = guide_legend(nrow = 10))+scale_x_continuous(limits=c(-3,3))
+
+
+#stacked_species
+#ggexport(stacked_species, filename="Stacked_plot_species.pdf", width=6, height=9)
+
+DAA_taxa$qval_adj<-(-log10(DAA_taxa$qval))
+
+bubble_species<-ggplot(DAA_taxa, aes(x=value, y=updated_text, size = qval_adj)) + geom_point(alpha=1, aes(color=phylum))+scale_size(range=c(0.01,4), "Significance")+scale_color_manual(values=mycolors)+theme_void()+guides(color="none", fill="none")
+
+#bubble_species
+```
+
+<br><br>
+
+
+```{r fig.cap="**Figure X. Differentially abundant genera (effect size > 1 or <  - 1) colored by phylum 14 days (day 2) after compared to day before (day 0) BSS administration. Significance represents -log of adjusted p value after multiple comparisons (< 0.05). The greater the circle the more statistically significant.**", fig.height=2.5, fig.width=7}
+
+figure_day14<-stacked_species+bubble_species
+
+figure_day14
+
+FigureSX<-figure_day14
+
+library(downloadthis)
+figure_day14 %>%
+  download_this(
+    output_name = "Stacked_plot_bacterial_genera",
+    output_extension = ".pdf",
+    button_label = "Download figure as .pdf",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-solid fa-image",
+    ggsave_args = list(height=2.5, width=7)
+  )
+
+
+
+#ggexport(stacked_species+bubble_species, filename="Stacked_plot_genus_w_qval_day14.pdf",width=7, height=2.5)
+
+
+```
+
+### Day 28
+
+
+```{r}
+
+table_sub<- table_day28 %>% filter(qval < 0.05)
+table_sub2<- table_sub %>% filter(coef< -1)
+table_sub3<- table_sub %>% filter(coef > 1)
+table_day28<-rbind(table_sub2, table_sub3)
+
+taxa[,c("species","OTU")]<-NULL
+taxa_uniq<-data.frame(unique(taxa))
+table_day28$genus<-table_day28$feature
+DAA_taxa<-merge.data.frame(table_day28, taxa_uniq, by="genus", all.x=TRUE, all.y=FALSE)
+
+```
+
+
+```{r}
+
+DAA_taxa$phylum<- factor(DAA_taxa$phylum,
+    levels = c('Actinomycetota','Pseudomonadota'), ordered = TRUE)
+
+```
+
+```{r}
+
+mycolors <- c("#A6CEE3","#D9A295")
+
+DAA_taxa<- DAA_taxa %>% mutate(updated_text = gsub("_", " ", genus))
+
+
+
+DAA_taxa$updated_text<- factor(DAA_taxa$updated_text, levels = DAA_taxa$updated_text[order(DAA_taxa$phylum, DAA_taxa$coef, decreasing=TRUE)])
+
+stacked_species<-ggplot(DAA_taxa, aes(x = coef, y = updated_text, fill=phylum)) +
+  geom_bar(stat = "identity",show.legend = TRUE) + xlab("Effect size") +scale_fill_manual(values=mycolors)+theme_classic()+geom_col(color="black")+theme(legend.position="right") +ylab(NULL)+guides(fill = guide_legend(nrow = 10))+scale_x_continuous(limits=c(-3,3))
+
+
+#stacked_species
+#ggexport(stacked_species, filename="Stacked_plot_species.pdf", width=6, height=9)
+
+DAA_taxa$qval_adj<-(-log10(DAA_taxa$qval))
+
+bubble_species<-ggplot(DAA_taxa, aes(x=value, y=updated_text, size = qval_adj)) + geom_point(alpha=1, aes(color=phylum))+scale_size(range=c(0.01,4), "Significance")+scale_color_manual(values=mycolors)+theme_void()+guides(color="none", fill="none")
+
+#bubble_species
+```
+
+<br><br>
+
+
+```{r fig.cap="**Figure X. Differentially abundant genera (effect size > 1 or <  - 1) colored by phylum 28 days (day 2) after compared to day before (day 0) BSS administration. Significance represents -log of adjusted p value after multiple comparisons (< 0.05). The greater the circle the more statistically significant.**", fig.height=1.25, fig.width=6}
+
+figure_day28<-stacked_species+bubble_species
+
+figure_day28
+
+FigureSX<-figure_day28
+
+library(downloadthis)
+figure_day28 %>%
+  download_this(
+    output_name = "Stacked_plot_bacterial_genera",
+    output_extension = ".pdf",
+    button_label = "Download figure as .pdf",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-solid fa-image",
+    ggsave_args = list(height=1.25, width=8)
+  )
+
+
+
+#ggexport(stacked_species+bubble_species, filename="Stacked_plot_genus_w_qval_day28.pdf",width=7, height=1.1)
+
+```
+
+```{r}
+Figure_day8_14_28<-ggarrange(figure_day8, figure_day14, figure_day28, ncol=1, nrow=3, heights=c(3.5,2.75,1), common.legend=TRUE)
+
+#ggexport(Figure_day8_14_28, filename="Stacked_plot_genus_w_qval_day_8_day14_day28.pdf",width=8, height=10)
+
+```
