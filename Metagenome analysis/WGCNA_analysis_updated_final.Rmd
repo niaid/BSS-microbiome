@@ -1,0 +1,807 @@
+---
+title: "The gut microbiome after BSS dosing."
+author: "Lauren Krausfeldt"
+date: "2026-January-15"
+output:
+  html_document:
+    code_folding: hide
+    keep_md: yes
+    toc: true
+    toc_float: true
+    toc_depth: 6
+    theme: spacelab
+  pdf_document: default
+  
+---
+
+# Clustering taxa for network analysis with WGCNA
+
+The goal for this analysis was to use WGCNA to get representative modules of group of taxa that "act" similarly. This is meant to simplify the data for metabolite networks.  
+
+```{=html}
+<style>
+body, p {
+  font-family: Arial;
+  text-align: justify;
+  font-size: 12pt;
+}
+</style>
+```
+
+```{=html}
+<style>
+caption {
+      color: black;
+      font-weight: bold;
+      text-align: justify;
+    }
+</style>
+```
+
+## 1. Data preparation
+
+```{r fig.height=8, fig.width=14, message=FALSE, warning=FALSE, results='hide'}
+
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(stringr)
+library(phyloseq)
+library(metagMisc)
+library(vegan)
+library(tidyverse)
+library(ggpubr)
+library(ggpubr)
+library(rstatix)
+library(knitr)
+library(GUniFrac)
+library(ggrepel)
+library(MMUPHin)
+library(ggprism)
+library(ggbreak)
+library(microbial)
+library(devtools)
+library(pairwiseAdonis)
+library(RColorBrewer)
+library(scales)
+library(ggtext)
+library(kableExtra)
+library(pixiedust)
+library(Hmisc)
+library(corrplot)
+library(WGCNA) 
+library(tidyverse)
+library(magrittr) 
+
+```
+
+### Import data
+
+Rarefied data was imported and a phyloseq object was a created. Taxa were summed at the genus level for clustering analysis. 
+ 
+```{r warning=FALSE, message=FALSE}
+data<-read.csv("rarefied_bacterial_table_not_batch_filtered_prev.csv", row.names=1, header=TRUE)
+
+metadata<-read.csv("BSS_metadata update10FEB2025.csv", row.names=1, header=TRUE)
+metadata<-as.data.frame(t(metadata))
+metadata[, c("ATCCMSA2002control_P1","ATCCMSA2002control_P2","NegativeControl","NegativeControl_P2")] <- NULL
+metadata<-as.data.frame(t(metadata))
+
+metadata$Age<-as.numeric(metadata$Age)
+metadata$Day.of.sample.relative.to.BSS.administration<-as.numeric(metadata$Day.of.sample.relative.to.BSS.administration)
+metadata$Day<-as.numeric(metadata$Day)
+metadata$Calculated.BMI<-as.numeric(metadata$Calculated.BMI)
+metadata$Days_colonoscopy_bl<-as.numeric(metadata$Days_colonoscopy_bl)
+metadata$Days_colonoscopy_day0<-as.numeric(metadata$Days_colonoscopy_day0)
+
+
+taxa <- data[, c("kingdom","phylum","class","order","family","genus","species","OTU")]
+data[, c("kingdom","phylum","class","order","family","genus","species","OTU","ATCCMSA2002control_P1","ATCCMSA2002control_P2","NegativeControl","NegativeControl_P2")] <- NULL
+
+otu<-otu_table(data, taxa_are_rows=TRUE)
+meta<-sample_data(metadata)
+tax<-tax_table(as.matrix(taxa))
+dada2_rare_0<-phyloseq(otu, meta, tax)
+
+
+```
+
+
+## 2. WGCNA
+
+WGCNA was used to cluster rarefied (normalized) abundances all genera from all samples. 
+
+```{r}
+
+genus<-tax_glom(dada2_rare_0, "genus")
+rarefied<-phyloseq_to_df(genus, addtax=T)
+rownames(rarefied)<-rarefied[,"genus"]
+rarefied[, c("kingdom","phylum","class","order","family","genus","species","OTU","OTU.1")] <- NULL
+
+
+```
+
+### Calculating power threshold
+
+```{r warning=FALSE, message=FALSE}
+
+DAA <- as.data.frame(t(rarefied))
+
+
+## tutorials suggest removing outlier samples. To look for these, the code hashed out below is for clustering samples. I did not remove any samples becaues I don't think if that's appropriate for this study and not all "outliers" are coming from one person. Also there were strong differences in response and I don't want to lose that resolution.
+
+powers = c(c(1:20), seq(from = 22, to=30, by=2))
+
+sft = pickSoftThreshold(DAA, powerVector = powers, verbose = 5) 
+#Scale-free topology fit index as a function of the soft-thresholding power
+
+
+
+```
+
+```{r}
+par(mfrow = c(1,2));
+cex1 = 0.9;
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+     main = paste("Scale independence")); text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],labels=powers,cex=cex1,col="red"); abline(h=0.90,col="red") 
+
+```
+
+```{r}
+# Mean connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+     xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+     main = paste("Mean connectivity")); text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+```
+
+<br>
+
+>Notes: For power threshold, choosing 7. 
+
+<br>
+
+```{r message=FALSE, warning=FALSE, results=FALSE}
+
+picked_power = 7
+temp_cor <- cor       
+cor <- WGCNA::cor         
+netwk <- blockwiseModules(DAA,
+                          power = picked_power,              
+                          networkType = "signed",
+
+                          # == Tree and Block Options ==
+                          deepSplit = 3,
+                          pamRespectsDendro = F,
+                          detectCutHeight = 0.995,
+                          minModuleSize = 10,
+                          maxBlockSize = 4000,
+                          saveTOMs = T,
+                          saveTOMFileBase = "ER",
+                          numericLabels = T,
+                          verbose = 3)
+
+```
+
+```{r}
+
+mergedColors = labels2colors(netwk$colors)
+# Plot the dendrogram and the module colors underneath
+plotDendroAndColors(
+  netwk$dendrograms[[1]],
+  mergedColors[netwk$blockGenes[[1]]],
+  "Module colors",
+  dendroLabels = FALSE,
+  hang = 0.03,
+  addGuide = TRUE,
+  guideHang = 0.05 )
+
+netwk$dendrograms
+
+
+
+```
+
+<br><br>
+
+```{r}
+
+module_df <- data.frame(
+  genus= names(netwk$colors),
+  colors = labels2colors(netwk$colors),
+  MEs = netwk$colors
+)
+
+
+```
+
+<br>
+
+### Eigengenes
+
+Listed how many modules (eigengenes) have been generated and determined the differences between the abundances of the eigengenes at different time points to determine which ones to focus in on related to the response at day2. 
+
+```{r}
+
+table(netwk$colors)
+
+```
+
+<br>
+
+
+>Notes: There are 12 modules for these samples. 
+
+<br><br> 
+
+
+```{r}
+
+
+MEs0 = moduleEigengenes(DAA, netwk$colors)$eigengenes
+MEs0$Sample<-rownames(MEs0)
+
+kable(MEs0, caption = "<strong>Table X. Genus eigengenes. <strong>") %>%
+  kable_styling(bootstrap_options = c("striped")) %>% 
+  scroll_box(width = "750px", height="650px", fixed_thead=T) 
+
+library(downloadthis)
+MEs0 %>%
+  download_this(
+    output_name = "Genus eigengenes",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+
+#write.csv(MEs0, "Updated_genus_eigengenes.csv")
+
+
+```
+
+
+<br>
+
+>**Notes:** ME0 represents all the other taxa that didn't cluster, should not be included as an eigengene. 
+
+<br>
+
+
+```{r}
+
+#genus<-tax_glom(dada2_rare_0, "genus")
+rarefied<-phyloseq_to_df(genus, addtax=T)
+taxa<-rarefied[,c("kingdom","phylum","class","order","family","genus")]
+taxa$OTU<-taxa$genus
+rownames(taxa)<-taxa$genus
+taxa[,"genus"]<-NULL
+
+rownames(rarefied)<-rarefied[,"genus"]
+rarefied[, c("kingdom","phylum","class","order","family","genus","species","OTU","OTU.1")] <- NULL
+
+otu<-otu_table(rarefied, taxa_are_rows=T)
+
+tax<-tax_table(as.matrix(taxa))
+
+genus_new<-phyloseq(otu, meta, tax)
+
+
+taxa_sum<-data.frame(taxa_sums(genus_new))
+taxa_sum$x.genus<-rownames(taxa_sum)
+
+```
+
+### Stats for modules by timepoint
+
+
+
+```{r warning=FALSE, message=FALSE, results='asis'}
+
+MEs0$Sample<-rownames(MEs0)
+MEs<-merge.data.frame(MEs0, metadata, by="Sample", all.x=TRUE, all.y=TRUE)
+
+
+
+
+```
+
+```{r}
+
+
+
+MEs<- MEs[MEs$SubjectID != "163114", ]
+library(emmeans)
+
+emmeans={}
+gene_names<-colnames(MEs[,c(2:12)])
+#model<-lm(Shannon~Timepoint+SubjectID, data=metadata2)
+
+library(lme4)
+for (i in gene_names) {
+fit <- lmer(MEs[[i]]~Timepoint + (1|SubjectID), data = MEs)
+
+emmeans[[i]]<-summary(emmeans(fit, pairwise~Timepoint))
+}
+
+emmeans
+
+```
+
+```{r, results='asis'}
+#for (name in names(x_list)) {
+  #cat("##", name, "\n")
+#  print(x_list[[name]])
+#  cat("\n\n")
+#}
+
+```
+
+
+```{r}
+one<-module_df %>% filter(MEs == 1)
+two<-module_df %>% filter(MEs == 2)
+four<-module_df %>% filter(MEs == 4)
+five<-module_df %>% filter(MEs == 5)
+nine<-module_df %>% filter(MEs == 9)
+ten<-module_df %>% filter(MEs == 10)
+
+
+
+
+
+```
+
+
+<br><br>
+
+>**Notes:** Modules ME1, ME2, ME4, ME5, ME9, and ME10 are significant at day2 compared to other time points. 
+
+-------------
+
+<br><br>
+
+## 3. Definitions of modules 
+
+### ME1 
+
+
+```{r}
+
+rarefied$genus<-rownames(rarefied) 
+
+one2<-merge.data.frame(one, rarefied, by="genus", all.x=TRUE, all.y=FALSE)
+one2<-one2 %>% mutate_at(4:127, as.numeric)
+
+
+rownames(one2)<-one2$genus
+one2[,c(1:3)]<-NULL
+
+one2<-as.data.frame(t(one2))
+one2$Sample<-rownames(one2)
+
+MEs_abund<- merge.data.frame(one2, MEs0, by="Sample", all.x=TRUE, all.y=TRUE)
+
+rownames(MEs_abund)<-MEs_abund$Sample
+MEs_abund[,"Sample"]<-NULL
+
+
+
+
+x<-data.frame(cor(MEs_abund))
+x$genus<-rownames(x)
+
+testRes = cor.mtest(MEs_abund, conf.level = 0.95)
+p<-data.frame(testRes$p)
+
+
+y<-data.frame(x$genus, x$ME1,p$ME1)
+names(y)[1]<-"genus"
+
+taxa_sum$genus<-rownames(taxa_sum)
+
+z<-merge.data.frame(y, taxa_sum, by="genus", all.x=TRUE, all=FALSE)
+taxa$genus<-taxa$OTU
+a<-merge.data.frame(z, taxa, by="genus", all.x=TRUE, all.y=FALSE)
+
+a <- data.frame(a[order(a$taxa_sums.genus_new., decreasing=TRUE), ])
+a[,"x.genus"]<-NULL
+
+names(a)[2]<-"R2"
+names(a)[3]<-"p value"
+names(a)[4]<-"Total abundance"
+kable(a, caption = "<strong>Table X. Info on genera in ME1.<strong>") %>%
+  kable_styling(bootstrap_options = c("striped")) %>%
+  scroll_box(width = "750px", height="650px", fixed_thead=T)
+
+ME1<-a
+
+library(downloadthis)
+a %>%
+  download_this(
+    output_name = "ME1",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+
+```
+
+<br>
+
+>**Notes:** Eigengene defined by Bifidobacterium, Alistipes and unclassified Bacteria, but lots of other beneficial bacteria, like Ligilactobacillus. 
+
+
+-------------
+
+<br><br>
+
+### ME2
+
+```{r}
+
+rarefied$genus<-rownames(rarefied) 
+
+two2<-merge.data.frame(two, rarefied, by="genus", all.x=TRUE, all.y=FALSE)
+two2<-two2 %>% mutate_at(4:127, as.numeric)
+
+
+rownames(two2)<-two2$genus
+two2[,c(1:3)]<-NULL
+
+two2<-as.data.frame(t(two2))
+two2$Sample<-rownames(two2)
+
+MEs_abund<- merge.data.frame(two2, MEs0, by="Sample", all.x=TRUE, all.y=TRUE)
+
+rownames(MEs_abund)<-MEs_abund$Sample
+MEs_abund[,"Sample"]<-NULL
+
+x<-data.frame(cor(MEs_abund, method="spearman"))
+x$genus<-rownames(x)
+
+testRes = cor.mtest(MEs_abund, conf.level = 0.95)
+p<-data.frame(testRes$p)
+
+
+y<-data.frame(x$genus, x$ME2,p$ME2)
+
+names(y)[1]<-"genus"
+
+taxa_sum$genus<-rownames(taxa_sum)
+
+z<-merge.data.frame(y, taxa_sum, by="genus", all.x=TRUE, all=FALSE)
+taxa$genus<-taxa$OTU
+a<-merge.data.frame(z, taxa, by="genus", all.x=TRUE, all.y=FALSE)
+
+a <- data.frame(a[order(a$taxa_sums.genus_new., decreasing=TRUE), ])
+a[,"x.genus"]<-NULL
+
+
+names(a)[2]<-"R2"
+names(a)[3]<-"p value"
+names(a)[4]<-"Total abundance"
+kable(a, caption = "<strong>Table X. Info on genera in ME2.<strong>") %>%
+  kable_styling(bootstrap_options = c("striped")) %>%
+  scroll_box(width = "750px", height="650px", fixed_thead=T)
+
+ME2<-a
+
+a %>%
+  download_this(
+    output_name = "ME2",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+```
+
+<br>
+
+>**Notes:** Eigengene defined by Blautia. Faecalibacterium, Roseburia, Lachnospiraceae, Ruminococcus (Eubacteriales). Good bacteria. 
+
+
+-------------
+
+<br><br>
+
+### ME4 
+
+```{r}
+
+
+rarefied$genus<-rownames(rarefied)
+
+three2<-merge.data.frame(four, rarefied, by="genus", all.x=TRUE, all.y=FALSE)
+three2<-three2 %>% mutate_at(4:127, as.numeric)
+
+
+rownames(three2)<-three2$genus
+three2[,c(1:3)]<-NULL
+
+three2<-as.data.frame(t(three2))
+three2$Sample<-rownames(three2)
+
+MEs_abund<- merge.data.frame(three2, MEs0, by="Sample", all.x=TRUE, all.y=TRUE)
+
+rownames(MEs_abund)<-MEs_abund$Sample
+MEs_abund[,"Sample"]<-NULL
+
+
+
+
+x<-data.frame(cor(MEs_abund))
+x$genus<-rownames(x)
+
+testRes = cor.mtest(MEs_abund, conf.level = 0.95)
+p<-data.frame(testRes$p)
+
+
+y<-data.frame(x$genus, x$ME4,p$ME4)
+names(y)[1]<-"genus"
+
+taxa_sum$genus<-rownames(taxa_sum)
+
+z<-merge.data.frame(y, taxa_sum, by="genus", all.x=TRUE, all=FALSE)
+taxa$genus<-taxa$OTU
+a<-merge.data.frame(z, taxa, by="genus", all.x=TRUE, all.y=FALSE)
+
+a <- data.frame(a[order(a$taxa_sums.genus_new., decreasing=TRUE), ])
+a[,"x.genus"]<-NULL
+
+names(a)[2]<-"R2"
+names(a)[3]<-"p value"
+names(a)[4]<-"Total abundance"
+kable(a, caption = "<strong>Table X. Info on genera in ME4.<strong>") %>%
+  kable_styling(bootstrap_options = c("striped")) %>%
+  scroll_box(width = "750px", height="650px", fixed_thead=T)
+
+ME4<-a
+
+a %>%
+  download_this(
+    output_name = "ME4",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+```
+
+<br>
+
+>**Notes:** Eigengene defined by Megasphaera (Veillonellaceae) and other lower abundant taxa. 
+
+
+
+-------------
+
+<br><br>
+
+
+### ME5
+
+```{r}
+rarefied$genus<-rownames(rarefied) 
+
+sixteen2<-merge.data.frame(five, rarefied, by="genus", all.x=TRUE, all.y=FALSE)
+rownames(sixteen2)<-sixteen2$genus
+sixteen2[,c(1:3)]<-NULL
+
+sixteen2<-as.data.frame(t(sixteen2))
+sixteen2$Sample<-rownames(sixteen2)
+
+MEs_abund<- merge.data.frame(sixteen2, MEs0, by="Sample", all.x=TRUE, all.y=TRUE)
+
+rownames(MEs_abund)<-MEs_abund$Sample
+MEs_abund[,"Sample"]<-NULL
+
+
+
+
+x<-data.frame(cor(MEs_abund))
+x$genus<-rownames(x)
+
+testRes = cor.mtest(MEs_abund, conf.level = 0.95)
+p<-data.frame(testRes$p)
+
+
+y<-data.frame(x$genus, x$ME5,p$ME5)
+names(y)[1]<-"genus"
+
+taxa_sum$genus<-rownames(taxa_sum)
+
+z<-merge.data.frame(y, taxa_sum, by="genus", all.x=TRUE, all=FALSE)
+taxa$genus<-taxa$OTU
+a<-merge.data.frame(z, taxa, by="genus", all.x=TRUE, all.y=FALSE)
+
+a <- data.frame(a[order(a$taxa_sums.genus_new., decreasing=TRUE), ])
+a[,"x.genus"]<-NULL
+
+
+names(a)[2]<-"R2"
+names(a)[3]<-"p value"
+names(a)[4]<-"Total abundance"
+kable(a, caption = "<strong>Table X. Info on genera in ME5.<strong>") %>%
+  kable_styling(bootstrap_options = c("striped")) %>%
+  scroll_box(width = "750px", height="650px", fixed_thead=T)
+ME5<-a
+
+
+a %>%
+  download_this(
+    output_name = "ME5",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+```
+
+
+<br>
+
+>**Notes:** Eigengene defined by Burkholderiales and other Betaproteobacteria. 
+
+
+<br>
+
+
+
+### ME9
+
+```{r}
+
+
+rarefied$genus<-rownames(rarefied)
+
+twenty2<-merge.data.frame(nine, rarefied, by="genus", all.x=TRUE, all.y=FALSE)
+twenty2<-twenty2 %>% mutate_at(4:127, as.numeric)
+
+
+rownames(twenty2)<-twenty2$genus
+twenty2[,c(1:3)]<-NULL
+
+twenty2<-as.data.frame(t(twenty2))
+twenty2$Sample<-rownames(twenty2)
+
+MEs_abund<- merge.data.frame(twenty2, MEs0, by="Sample", all.x=TRUE, all.y=TRUE)
+
+rownames(MEs_abund)<-MEs_abund$Sample
+MEs_abund[,"Sample"]<-NULL
+
+
+
+
+x<-data.frame(cor(MEs_abund))
+x$genus<-rownames(x)
+
+testRes = cor.mtest(MEs_abund, conf.level = 0.95)
+p<-data.frame(testRes$p)
+
+
+y<-data.frame(x$genus, x$ME9,p$ME9)
+names(y)[1]<-"genus"
+
+taxa_sum$genus<-rownames(taxa_sum)
+
+z<-merge.data.frame(y, taxa_sum, by="genus", all.x=TRUE, all=FALSE)
+taxa$genus<-taxa$OTU
+a<-merge.data.frame(z, taxa, by="genus", all.x=TRUE, all.y=FALSE)
+
+a <- data.frame(a[order(a$taxa_sums.genus_new., decreasing=TRUE), ])
+a[,"x.genus"]<-NULL
+
+names(a)[2]<-"R2"
+names(a)[3]<-"p value"
+names(a)[4]<-"Total abundance"
+kable(a, caption = "<strong>Table X. Info on genera in ME9.<strong>") %>%
+  kable_styling(bootstrap_options = c("striped")) %>%
+  scroll_box(width = "750px", height="650px", fixed_thead=T)
+
+
+
+ME9<-a
+
+a %>%
+  download_this(
+    output_name = "ME9",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+```
+
+<br>
+
+>**Notes:** Eigengene defined by Enterobacteriaceae and Escherichia - other Gammaproteobacteria including Shigella and Salmonella (possibly also E. coli). 
+
+
+
+-------------
+
+<br><br>
+
+### ME10
+
+```{r}
+
+rarefied$genus<-rownames(rarefied)
+
+twentyone2<-merge.data.frame(ten, rarefied, by="genus", all.x=TRUE, all.y=FALSE)
+twentyone2<-twentyone2 %>% mutate_at(4:127, as.numeric)
+
+
+rownames(twentyone2)<-twentyone2$genus
+twentyone2[,c(1:3)]<-NULL
+
+twentyone2<-as.data.frame(t(twentyone2))
+twentyone2$Sample<-rownames(twentyone2)
+
+MEs_abund<- merge.data.frame(twentyone2, MEs0, by="Sample", all.x=TRUE, all.y=TRUE)
+
+rownames(MEs_abund)<-MEs_abund$Sample
+MEs_abund[,"Sample"]<-NULL
+
+
+
+
+x<-data.frame(cor(MEs_abund))
+x$genus<-rownames(x)
+
+testRes = cor.mtest(MEs_abund, conf.level = 0.95)
+p<-data.frame(testRes$p)
+
+
+y<-data.frame(x$genus, x$ME10,p$ME10)
+
+names(y)[1]<-"genus"
+
+taxa_sum$genus<-rownames(taxa_sum)
+
+z<-merge.data.frame(y, taxa_sum, by="genus", all.x=TRUE, all=FALSE)
+taxa$genus<-taxa$OTU
+a<-merge.data.frame(z, taxa, by="genus", all.x=TRUE, all.y=FALSE)
+
+a <- data.frame(a[order(a$taxa_sums.genus_new., decreasing=TRUE), ])
+a[,"x.genus"]<-NULL
+
+names(a)[2]<-"R2"
+names(a)[3]<-"p value"
+names(a)[4]<-"Total abundance"
+kable(a, caption = "<strong>Table X. Info on genera in ME10.<strong>") %>%
+  kable_styling(bootstrap_options = c("striped")) %>%
+  scroll_box(width = "750px", height="650px", fixed_thead=T)
+ME10<-a
+
+a %>%
+  download_this(
+    output_name = "ME10",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+```
+
+<br>
+
+>**Notes:** Eigengene defined by Klebsiella, Veillonella, and Clostridium. 
+
+-------------
+
+<br><br>
+
+
+
