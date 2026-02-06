@@ -1,8 +1,8 @@
 
 #### SOP ####
 # the purpose of this script was to split the patient cohort depending on their responder status to BSS.
-# then, compare each time point specific fold changes back to day0 and similarly determine temporal significant differences.
-# finally, this script generates bubble plots for the main figure, and matrix bar plots for the supplement.
+# then, compare each time point specific fold changes back to day0 and similarly determine temporal differences.
+# finally, this script generates bubble plots for the main figure, and matrix bar plots for the supplement to show pathway level trends.
 
 # original dataframe for responder status was provided with entries in Response detailing Responder, and Non-Responder.
 # the collaborators requested that we refer to them as high and low responders moving forward.
@@ -80,9 +80,9 @@ dat_longer <- dat_t %>%
   
   # filter data set for responders
   filter(Response == "Responder")
-  
 
-  
+
+
 ##### High Responder Stat calculations #####
 df <- dat_longer %>% 
   rename(time = Group, metabolite = Metabolite)
@@ -104,11 +104,15 @@ combinations <- df %>%
 # determine which metabolites show a significant difference for at least 1 time point
 responder_sig_hits <- combinations %>% 
   filter(timepoint == "Day 0" | timepoint == "Day 2") %>% 
+  
   rowwise() %>% 
-  mutate(p_value = wilcox_test(metabolite, timepoint),
-         p_adj = p.adjust(p_value, method = "BH")) %>% 
-  filter(p_adj < 0.1) %>% 
+  mutate(p_value = wilcox_test(metabolite, timepoint)) %>% 
   ungroup() %>% 
+  
+  mutate(p_adj = p.adjust(p_value, method = "BH")) %>% 
+  arrange(p_value) %>% 
+  filter(p_value < 0.05) %>% 
+  
   distinct(metabolite) %>% 
   pull()
 
@@ -122,11 +126,15 @@ num_sig_hits <- length(responder_sig_hits)
 
 # calculate the paired p-values using the wilcox.test()
 p_results <- combinations %>% 
+  
   rowwise() %>% 
-  mutate(p_value = wilcox_test(metabolite, timepoint),
-         p_adj = p.adjust(p_value, method = "BH"),
-         neg_logp = -log10(p_adj)) %>% 
+  mutate(p_value = wilcox_test(metabolite, timepoint)) %>% 
   ungroup() %>% 
+  
+  mutate(p_adj = p.adjust(p_value, method = "BH")) %>% 
+  arrange(p_value) %>% 
+  filter(p_value < 0.05) %>% 
+  
   rename(time = timepoint) %>% 
   select(metabolite, time, neg_logp)
 
@@ -182,6 +190,24 @@ dat_final_responders <- fc_results %>%
   relocate(Pathway, Pathway_adj, .after = metabolite)
 
 
+##### Cytoscape export #####
+
+cyto_df <- fc_results %>% 
+  left_join(p_results, join_by(metabolite, time)) %>% 
+  mutate(log2FC_adj = case_when(log2FC > 2 ~ 2,
+                                log2FC < -2 ~ -2, 
+                                TRUE~ log2FC))
+
+
+out_high <- cyto_df %>% 
+  filter(time == "Day 2") %>% 
+  select(metabolite, log2FC_adj, neg_logp)
+
+
+write.csv(out_high, paste(Sys.Date(), "Hourigansk_0005_High_Responder_Day2_Cytoscape.csv", sep = "_"), row.names = FALSE)
+
+
+
 
 ##### High Responder Bubble plot prep #####
 
@@ -193,10 +219,10 @@ dat_bubb_pre <- dat_final_responders %>%
                                 TRUE~ log2FC)) %>% 
   mutate(time = factor(time, levels = c("Baseline", "Day 2", "Day 8", "Day 14", "Day 28")))
 
-legend <- data.frame(metabolite = c("zz_low", "zz_high"), neg_logp = c(0,3), log2FC_adj = c(-2, 2))
+trick <- data.frame(metabolite = c("zz_low", "zz_high"), neg_logp = c(0,3), log2FC_adj = c(-2, 2))
 
 
-dat_bubb <- bind_rows(dat_bubb_pre, legend)
+dat_bubb <- bind_rows(dat_bubb_pre, trick)
 
 ##### High Responder Make the bubble plot #####
 
@@ -254,8 +280,110 @@ pathway_colors <- setNames(expanded_colors, metab_path)
 pathway_colors["insignificant"] <- "grey"
 
 
+##### High Responder Make the Volcano Plot #####
+
+# classify 
+dat_volcano <- dat_final_responders %>% 
+  left_join(dat_pathways, join_by(metabolite), relationship = "many-to-many") %>% 
+  relocate(Pathway, Pathway_adj, .after = metabolite) %>% 
+  mutate(Label = case_when(log2FC >= 0 & neg_logp >= -log10(0.05) ~ metabolite, 
+                           log2FC <= 0 & neg_logp >= -log10(0.05) ~ metabolite,
+                           TRUE ~ "" ), 
+         
+         
+         Color = case_when(log2FC >= 0 & neg_logp >= -log10(0.05) ~ Pathway_adj, 
+                           log2FC <= 0 & neg_logp >= -log10(0.05) ~ Pathway_adj,
+                           TRUE ~ "insignificant"))
+
+
+
+# make the plot
+p <- ggplot(dat_volcano, aes(x = log2FC, y = neg_logp, color = Color,  label = Label)) +
+  
+  # add the significance threshold line
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey")+
+  
+  geom_point(size = 1) +
+  
+  # apply previously defined color palette
+  scale_color_manual(values = pathway_colors) +
+  
+  #scale_y_continuous(expand = c(0,0), breaks = seq(0,7, by = 1), limits = c(0, 7))+
+  
+  #scale_x_continuous(limits = c(-0.8, 1), breaks = seq(-0.8, 1, by = 0.2))+
+  
+  labs(y = "-log10(p)", x = "log2(fold change)")+
+  
+  # point labeling
+  ggrepel::geom_text_repel(size = 3,
+                           max.overlaps = getOption("ggrepel.max.overlaps", default = 20),
+                           box.padding = 0.7) +
+  
+  # customize the appearance of the ggplot
+  theme(
+    # Remove legend
+    #legend.position = "none", 
+    
+    # Set legend background to transparent with no border
+    legend.background = element_rect(fill = "transparent", colour = NA),
+    
+    # Hide legend key
+    legend.key = element_blank(),
+    
+    # Customize plot title
+    plot.title = element_text(hjust = 0.5, size = 10, color = 'black'), 
+    
+    # Remove x-axis title
+    axis.title.x = element_text(color = "black", size = 8),
+    
+    # Customize y-axis title
+    axis.title.y = element_text(color = "black", size = 8), 
+    
+    # Customize appearance of x-axis text
+    axis.text.x = element_text(color = "black", size = 8),
+    
+    # Customize appearance of y-axis text
+    axis.text.y = element_text(color = "black", size = 8),
+    
+    # Customize axis ticks appearance
+    axis.ticks = element_line(color = 'black', size = 0.5),
+    
+    # Set plot background to transparent with no border
+    plot.background = element_rect(fill = "transparent", colour = NA),
+    
+    # Customize the background of the panel (plot area)
+    panel.background = element_rect(fill = 'white'),
+    
+    # Customize panel border
+    panel.border = element_rect(colour = "black", fill=NA, size = 0.5),
+    
+    # Remove major gridlines
+    panel.grid.major = element_blank(),
+    
+    # Remove minor gridlines
+    panel.grid.minor = element_blank(),
+    
+    # Remove strip background (for facet labels)
+    strip.background = element_blank(),
+    
+    # strip text for x-axis (facet labels)
+    strip.text.x = element_blank()
+    #strip.text.x = element_text(color = "black", size = 6)
+  )
+
+
+# view the plot
+plot(p)
+
+# save the plot
+ggsave(paste(Sys.Date(), "Caroleb_0002_Volcano_Plot.svg", sep = "_"), bg = "transparent",
+       plot = p, width = 4, height = 4, dpi = 150)
+
+
 
 #### Preliminary Low Responder Stats and Calcs ####
+# original dataframe for responder status was provided with entries in Response detailing Responder, and Non-Responder.
+# the collaborators requested that we refer to them as high and low responders moving forward.
 
 dat_longer <- dat_t %>% 
   pivot_longer(4:ncol(dat_t), names_to = "Metabolite", values_to = "Value") %>% 
@@ -278,11 +406,17 @@ dat_longer <- dat_t %>%
 df <- dat_longer %>% 
   rename(time = Group, metabolite = Metabolite)
 
+
+
+
+
 # remove the time point that every other time point will be compared back to.
 combinations <- df %>% 
   filter(time != "Day 0") %>% 
   distinct(metabolite, time) %>% 
   rename(timepoint = time)
+
+
 
 
 ##### Low Responder Significance filtering #####
@@ -292,11 +426,15 @@ combinations <- df %>%
 # first run the significance test for the non-responders
 # calculate the paired p-values using the wilcox.test()
 p_results <- combinations %>% 
+  
   rowwise() %>% 
-  mutate(p_value = wilcox_test(metabolite, timepoint),
-         p_adj = p.adjust(p_value, method = "BH"),
-         neg_logp = -log10(p_adj)) %>% 
+  mutate(p_value = wilcox_test(metabolite, timepoint)) %>% 
   ungroup() %>% 
+  
+  mutate(p_adj = p.adjust(p_value, method = "BH")) %>% 
+  arrange(p_value) %>% 
+  filter(p_value < 0.05) %>% 
+  
   rename(time = timepoint) %>% 
   select(metabolite, time, neg_logp)
 
@@ -350,6 +488,23 @@ dat_final_non_responders <- fc_results %>%
 
 
 
+##### Cytoscape export #####
+
+cyto_df <- fc_results %>% 
+  left_join(p_results, join_by(metabolite, time)) %>% 
+  mutate(log2FC_adj = case_when(log2FC > 2 ~ 2,
+                                log2FC < -2 ~ -2, 
+                                TRUE~ log2FC))
+
+
+out_low <- cyto_df %>% 
+  filter(time == "Day 2") %>% 
+  select(metabolite, log2FC_adj, neg_logp)
+
+
+write.csv(out_low, paste(Sys.Date(), "Hourigansk_0005_Low_Responder_Day2_Cytoscape.csv", sep = "_"), row.names = FALSE)
+
+
 ##### Low Responder Bubble plot prep #####
 
 # keep only compounds that passed the cut off
@@ -363,10 +518,10 @@ dat_bubb_pre <- dat_final_non_responders %>%
   mutate(time = factor(time, levels = c("Baseline", "Day 2", "Day 8", "Day 14", "Day 28")))
 
 
-legend <- data.frame(metabolite = c("zz_low", "zz_high"), neg_logp = c(0,3), log2FC_adj = c(-2, 2))
+trick <- data.frame(metabolite = c("zz_low", "zz_high"), neg_logp = c(0,3), log2FC_adj = c(-2, 2))
 
 
-dat_bubb <- bind_rows(dat_bubb_pre, legend)
+dat_bubb <- bind_rows(dat_bubb_pre, trick)
 
 ##### Low Responder Make the bubble plot #####
 
@@ -402,6 +557,7 @@ ggsave(plot = bubble_plot, filename = paste(Sys.Date(), "lapointpo_TCM_non_respo
 #### Follow-Up MBP Analysis SOP ####
 # below chunks are follow up to the preliminary responder status analysis
 # the purpose was to essentially convert the bubble plots to MBPs
+# since they are more compact for exhibiting pathway level trends
 # break down MBPs by responder status will go into the supplement
 # additionally, Bile Acid and Bile Acid Ratio data were added to the MBP
 
@@ -482,7 +638,7 @@ dat_longer <- dat_t %>%
   # merge patient responder status to treatment (data provided by Lauren)
   left_join(dat_responders, join_by(SubjectID)) %>% 
   relocate(SubjectID, Response, Colonoscopy, .after = Patient) 
-  
+
 
 df <- dat_longer %>% 
   rename(time = Group, metabolite = Metabolite)
@@ -504,17 +660,21 @@ combinations <- df %>%
 # determine which metabolites show a significant difference for at least 1 time point
 total_cohort_sig_hits <- combinations %>% 
   filter(timepoint == "Day 0" | timepoint == "Day 2") %>% 
+  
   rowwise() %>% 
-  mutate(p_value = wilcox_test(metabolite, timepoint),
-         p_adj = p.adjust(p_value, method = "BH")) %>% 
-  filter(p_adj < 0.1) %>% 
+  mutate(p_value = wilcox_test(metabolite, timepoint)) %>% 
   ungroup() %>% 
+  
+  mutate(p_adj = p.adjust(p_value, method = "BH")) %>% 
+  arrange(p_value) %>%
+  filter(p_value < 0.05)  %>% 
+  
   distinct(metabolite) %>% 
   pull()
 
 
 # save the sig hits to use as filter in a sankey diagram
-# write.csv(responder_sig_hits, "Responder_only_wilcox_day2_sig_hits.csv", row.names = F)
+#write.csv(total_cohort_sig_hits, "Total_cohort_wilcox_day2_sig_hits.csv", row.names = F)
 
 
 # count the number of significant hits
@@ -522,11 +682,14 @@ num_sig_hits <- length(responder_sig_hits)
 
 # calculate the paired p-values using the wilcox.test()
 p_results <- combinations %>% 
+  
   rowwise() %>% 
-  mutate(p_value = wilcox_test(metabolite, timepoint),
-         p_adj = p.adjust(p_value, method = "BH"),
-         neg_logp = -log10(p_adj)) %>% 
+  mutate(p_value = wilcox_test(metabolite, timepoint)) %>% 
   ungroup() %>% 
+  
+  mutate(p_adj = p.adjust(p_value, method = "BH")) %>% 
+  filter(p_value < 0.05) %>% 
+  
   rename(time = timepoint) %>% 
   select(metabolite, time, neg_logp)
 
@@ -585,12 +748,14 @@ dat_bile_t <- dat_bile %>%
   t() %>% 
   as.data.frame() %>% 
   row_to_names(row_number = 1) %>% 
-  rownames_to_column(var = "Sample_name")
+  rownames_to_column(var = "Remove") %>% 
+  rename(Sample_name = `Sample Name`, Time_point = `Sample Type`) %>% 
+  select(-Group, -Remove)
 
 
 dat_bile_merged <- dat_bile_t %>% 
-  left_join(dat_bile_meta, join_by(Sample_name)) %>% 
-  relocate(Patient, Time_point, .after = Sample_name) 
+  left_join(dat_bile_meta, join_by(Sample_name, Time_point)) %>% 
+  relocate(Patient, .after = Sample_name)
 
 
 ##### Tot Cohort Bile Acid Data Stats #####
@@ -655,15 +820,20 @@ combinations <- df %>%
 # determine which metabolites show a significant difference for at least 1 time point
 total_cohort_sig_hits <- combinations %>% 
   filter(timepoint == "Day 0" | timepoint == "Day 2") %>% 
+  
   rowwise() %>% 
-  mutate(p_value = wilcox_test(metabolite, timepoint),
-         p_adj = p.adjust(p_value, method = "BH")) %>% 
-  filter(p_adj < 0.1) %>% 
+  mutate(p_value = wilcox_test(metabolite, timepoint)) %>% 
   ungroup() %>% 
+  
+  mutate(p_adj = p.adjust(p_value, method = "BH")) %>% 
+  arrange(p_value) %>% 
+  filter(p_value < 0.05) %>% 
+  
   distinct(metabolite) %>% 
   pull()
 
-
+# save the corr results
+#write.csv(total_cohort_sig_hits, "Total_cohort_wilcox_bile_day2.csv", row.names = F)
 
 # count the number of significant hits
 num_sig_hits <- length(total_cohort_sig_hits)  
@@ -671,10 +841,16 @@ num_sig_hits <- length(total_cohort_sig_hits)
 # calculate the paired p-values using the wilcox.test()
 p_results <- combinations %>% 
   rowwise() %>% 
-  mutate(p_value = wilcox_test(metabolite, timepoint),
-         p_adj = p.adjust(p_value, method = "BH"),
-         neg_logp = -log10(p_adj)) %>% 
+  total_cohort_sig_hits <- combinations %>% 
+  filter(timepoint == "Day 0" | timepoint == "Day 2") %>% 
+  
+  rowwise() %>% 
+  mutate(p_value = wilcox_test(metabolite, timepoint)) %>% 
   ungroup() %>% 
+  
+  mutate(p_adj = p.adjust(p_value, method = "BH")) %>% 
+  arrange(p_value) %>% 
+  filter(p_value < 0.05) %>%  
   rename(time = timepoint) %>% 
   select(metabolite, time, neg_logp)
 
@@ -688,9 +864,9 @@ dat_bile_final <- fc_results_bile %>%
   filter(time != "Day 0") %>% 
   
   rename(Compound = metabolite) %>% 
- 
+  
   left_join(dat_bla_conj, join_by(Compound)) %>% 
-
+  
   mutate(Order_col = "zzz_bile",
          Class = paste("zz", Class, sep = "_")) %>% 
   
@@ -775,27 +951,36 @@ combinations <- df %>%
 
 # determine which metabolites show a significant difference for at least 1 time point
 total_cohort_sig_hits <- combinations %>% 
-  filter(timepoint == "Day 0" | timepoint == "Day 2") %>% 
+  filter(timepoint == "Day 0" | timepoint == "Day 2") %>%
+  
   rowwise() %>% 
-  mutate(p_value = wilcox_test(metabolite, timepoint),
-         p_adj = p.adjust(p_value, method = "BH")) %>% 
-  filter(p_adj < 0.1) %>% 
+  mutate(p_value = wilcox_test(metabolite, timepoint)) %>% 
   ungroup() %>% 
+  
+  mutate(p_adj = p.adjust(p_value, method = "BH")) %>% 
+  arrange(p_value) %>% 
+  filter(p_value < 0.05) %>% 
+  
   distinct(metabolite) %>% 
   pull()
 
-
+# save the corr results
+#write.csv(total_cohort_sig_hits, "Total_cohort_wilcox_bile_ratios_day2.csv", row.names = F)
 
 # count the number of significant hits
 num_sig_hits <- length(total_cohort_sig_hits)  
 
 # calculate the paired p-values using the wilcox.test()
 p_results <- combinations %>% 
+  
   rowwise() %>% 
-  mutate(p_value = wilcox_test(metabolite, timepoint),
-         p_adj = p.adjust(p_value, method = "BH"),
-         neg_logp = -log10(p_adj)) %>% 
+  mutate(p_value = wilcox_test(metabolite, timepoint)) %>% 
   ungroup() %>% 
+  
+  mutate(p_adj = p.adjust(p_value, method = "BH")) %>% 
+  arrange(p_value) %>% 
+  filter(p_value < 0.05) %>% 
+  
   rename(time = timepoint) %>% 
   select(metabolite, time, neg_logp)
 
@@ -838,7 +1023,7 @@ dat_mbp_pre <- dat_final %>%
 end <- ceiling(max(dat_mbp_pre$neg_logp))
 
 # this data frame is used to generate a significance legend in the matrix barplot
-legend <- data.frame("time" = rep("Baseline", end),
+trick <- data.frame("time" = rep("Baseline", end),
                     "Compound" = paste0("zz", sprintf("%02d", 1:end)), 
                     "Order_col" = paste0("ZZZZZ", sprintf("%02d", 1:end)), 
                     "Class" = paste0("ZZZZZ", sprintf("%02d", 1:end)),
@@ -846,8 +1031,8 @@ legend <- data.frame("time" = rep("Baseline", end),
                     "neg_logp" = c(1: end))
 
 
-# combine the legend data frame with the mbp data
-dat_mbp <- bind_rows(dat_mbp_pre, legend) %>% 
+# combine the trick legend data frame with the real data
+dat_mbp <- bind_rows(dat_mbp_pre, trick) %>% 
   drop_na(Class) %>% 
   mutate(time = factor(time, levels = c("Baseline", "Day 2", "Day 8", "Day 14", "Day 28"))) %>% 
   arrange(Order_col) 
@@ -858,10 +1043,10 @@ dat_mbp <- bind_rows(dat_mbp_pre, legend) %>%
 
 # generate the plot
 my_tot_cohort_plot <- matrix_barplot(data = dat_mbp, aes(x = neg_logp, y = Compound, color = median_log2FC), 
-                          sig_lines_at = NA,
-                          show_strip.x.text = TRUE, show_strip.y.text = TRUE, 
-                          remove.x.labels = TRUE, remove.y.labels = FALSE, switch = FALSE,
-                          cols = vars(time), rows = vars(Class), orientation = "portrait") +
+                                     sig_lines_at = NA,
+                                     show_strip.x.text = TRUE, show_strip.y.text = TRUE, 
+                                     remove.x.labels = TRUE, remove.y.labels = FALSE, switch = FALSE,
+                                     cols = vars(time), rows = vars(Class), orientation = "portrait") +
   
   scale_color_gradient2(low = 'blue', mid = 'grey75', high = 'red', midpoint = 0, limits = c(-cap, cap))+
   
@@ -985,11 +1170,14 @@ combinations <- df %>%
 # determine which metabolites show a significant difference for at least 1 time point
 bile_high_responder_sig_hits <- combinations %>% 
   filter(timepoint == "Day 0" | timepoint == "Day 2") %>% 
-  rowwise() %>% 
-  mutate(p_value = wilcox_test(metabolite, timepoint),
-         p_adj = p.adjust(p_value, method = "BH")) %>% 
-  filter(p_adj < 0.1) %>% 
+  
+  mutate(p_value = wilcox_test(metabolite, timepoint)) %>% 
   ungroup() %>% 
+  
+  mutate(p_adj = p.adjust(p_value, method = "BH")) %>% 
+  arrange(p_value) %>% 
+  filter(p_value < 0.05) %>%
+  
   distinct(metabolite) %>% 
   pull()
 
@@ -1000,11 +1188,15 @@ num_sig_hits <- length(bile_high_responder_sig_hits)
 
 # calculate the paired p-values using the wilcox.test()
 p_results <- combinations %>% 
+  
   rowwise() %>% 
-  mutate(p_value = wilcox_test(metabolite, timepoint),
-         p_adj = p.adjust(p_value, method = "BH"),
-         neg_logp = -log10(p_adj)) %>% 
+  mutate(p_value = wilcox_test(metabolite, timepoint)) %>% 
   ungroup() %>% 
+  
+  mutate(p_adj = p.adjust(p_value, method = "BH")) %>% 
+  arrange(p_value) %>% 
+  filter(p_value < 0.05)%>% 
+  
   rename(time = timepoint) %>% 
   select(metabolite, time, neg_logp)
 
@@ -1114,12 +1306,16 @@ combinations <- df %>%
 
 # determine which metabolites show a significant difference for at least 1 time point
 bla_ratio_high_responder_sig_hits <- combinations %>% 
-  filter(timepoint == "Day 0" | timepoint == "Day 2") %>% 
+  filter(timepoint == "Day 0" | timepoint == "Day 2") %>%
+  
   rowwise() %>% 
-  mutate(p_value = wilcox_test(metabolite, timepoint),
-         p_adj = p.adjust(p_value, method = "BH")) %>% 
-  filter(p_adj < 0.1) %>% 
+  mutate(p_value = wilcox_test(metabolite, timepoint)) %>% 
   ungroup() %>% 
+  
+  mutate(p_adj = p.adjust(p_value, method = "BH")) %>% 
+  arrange(p_value) %>% 
+  filter(p_value < 0.05) %>% 
+  
   distinct(metabolite) %>% 
   pull()
 
@@ -1130,11 +1326,15 @@ num_sig_hits <- length(bla_ratio_high_responder_sig_hits)
 
 # calculate the paired p-values using the wilcox.test()
 p_results <- combinations %>% 
+  
   rowwise() %>% 
-  mutate(p_value = wilcox_test(metabolite, timepoint),
-         p_adj = p.adjust(p_value, method = "BH"),
-         neg_logp = -log10(p_adj)) %>% 
+  mutate(p_value = wilcox_test(metabolite, timepoint)) %>% 
   ungroup() %>% 
+  
+  mutate(p_adj = p.adjust(p_value, method = "BH")) %>% 
+  arrange(p_value) %>% 
+  filter(p_value < 0.05)%>% 
+  
   rename(time = timepoint) %>% 
   select(metabolite, time, neg_logp)
 
@@ -1181,7 +1381,7 @@ dat_mbp_pre <- dat_final %>%
 end <- 6
 
 # this data frame is used to generate a significance legend in the matrix barplot
-legend <- data.frame("time" = rep("Baseline", end),
+trick <- data.frame("time" = rep("Baseline", end),
                     "Compound" = paste0("zz", sprintf("%02d", 1:end)), 
                     "Order_col" = paste0("ZZZZZ", sprintf("%02d", 1:end)), 
                     "Class" = paste0("ZZZZZ", sprintf("%02d", 1:end)),
@@ -1189,8 +1389,8 @@ legend <- data.frame("time" = rep("Baseline", end),
                     "neg_logp" = c(1: end))
 
 
-# combine the legend data frame with the real data
-dat_mbp <- bind_rows(dat_mbp_pre, legend) %>% 
+# combine the trick legend data frame with the real data
+dat_mbp <- bind_rows(dat_mbp_pre, trick) %>% 
   drop_na(Class) %>% 
   mutate(time = factor(time, levels = c("Baseline", "Day 2", "Day 8", "Day 14", "Day 28"))) %>% 
   arrange(Order_col) 
@@ -1201,10 +1401,10 @@ dat_mbp <- bind_rows(dat_mbp_pre, legend) %>%
 
 # generate the plot
 my_high_respon_plot <- matrix_barplot(data = dat_mbp, aes(x = neg_logp, y = Compound, color = median_log2FC), 
-                          sig_lines_at = NA,
-                          show_strip.x.text = TRUE, show_strip.y.text = TRUE, 
-                          remove.x.labels = TRUE, remove.y.labels = FALSE, switch = FALSE,
-                          cols = vars(time), rows = vars(Class), orientation = "portrait") +
+                                      sig_lines_at = NA,
+                                      show_strip.x.text = TRUE, show_strip.y.text = TRUE, 
+                                      remove.x.labels = TRUE, remove.y.labels = FALSE, switch = FALSE,
+                                      cols = vars(time), rows = vars(Class), orientation = "portrait") +
   
   scale_color_gradient2(low = 'blue', mid = 'grey75', high = 'red', midpoint = 0, limits = c(-cap, cap))+
   
@@ -1233,9 +1433,6 @@ ggsave(plot = my_high_respon_plot, paste(Sys.Date(), "Hourigansk_0005_MBP_High_R
 
 
 #### Low Responder MBP Analysis ####
-
-
-
 
 ##### Metab Low Responder Finalization #####
 # pull results from above responder analysis
@@ -1329,11 +1526,15 @@ combinations <- df %>%
 
 # calculate the paired p-values using the wilcox.test()
 p_results <- combinations %>% 
+  
   rowwise() %>% 
-  mutate(p_value = wilcox_test(metabolite, timepoint),
-         p_adj = p.adjust(p_value, method = "BH"),
-         neg_logp = -log10(p_adj)) %>% 
+  mutate(p_value = wilcox_test(metabolite, timepoint)) %>% 
   ungroup() %>% 
+  
+  mutate(p_adj = p.adjust(p_value, method = "BH")) %>% 
+  arrange(p_value) %>% 
+  filter(p_value < 0.05) %>% 
+  
   rename(time = timepoint) %>% 
   select(metabolite, time, neg_logp)
 
@@ -1443,11 +1644,15 @@ combinations <- df %>%
 
 # calculate the paired p-values using the wilcox.test()
 p_results <- combinations %>% 
+  
   rowwise() %>% 
-  mutate(p_value = wilcox_test(metabolite, timepoint),
-         p_adj = p.adjust(p_value, method = "BH"),
-         neg_logp = -log10(p_adj)) %>% 
+  mutate(p_value = wilcox_test(metabolite, timepoint)) %>% 
   ungroup() %>% 
+  
+  mutate(p_adj = p.adjust(p_value, method = "BH")) %>% 
+  arrange(p_value) %>% 
+  filter(p_value < 0.05) %>% 
+  
   rename(time = timepoint) %>% 
   select(metabolite, time, neg_logp)
 
@@ -1494,7 +1699,7 @@ dat_mbp_pre <- dat_final %>%
 end <- 6
 
 # this data frame is used to generate a significance legend in the matrix barplot
-legend <- data.frame("time" = rep("Baseline", end),
+trick <- data.frame("time" = rep("Baseline", end),
                     "Compound" = paste0("zz", sprintf("%02d", 1:end)), 
                     "Order_col" = paste0("ZZZZZ", sprintf("%02d", 1:end)), 
                     "Class" = paste0("ZZZZZ", sprintf("%02d", 1:end)),
@@ -1502,8 +1707,8 @@ legend <- data.frame("time" = rep("Baseline", end),
                     "neg_logp" = c(1: end))
 
 
-# combine the legend data frame with the real data
-dat_mbp <- bind_rows(dat_mbp_pre, legend) %>% 
+# combine the trick legend data frame with the real data
+dat_mbp <- bind_rows(dat_mbp_pre, trick) %>% 
   drop_na(Class) %>% 
   mutate(time = factor(time, levels = c("Baseline", "Day 2", "Day 8", "Day 14", "Day 28"))) %>% 
   arrange(Order_col) 
@@ -1514,10 +1719,10 @@ dat_mbp <- bind_rows(dat_mbp_pre, legend) %>%
 
 # generate the plot
 my_low_respon_plot <- matrix_barplot(data = dat_mbp, aes(x = neg_logp, y = Compound, color = median_log2FC), 
-                                      sig_lines_at = NA,
-                                      show_strip.x.text = TRUE, show_strip.y.text = TRUE, 
-                                      remove.x.labels = TRUE, remove.y.labels = FALSE, switch = FALSE,
-                                      cols = vars(time), rows = vars(Class), orientation = "portrait") +
+                                     sig_lines_at = NA,
+                                     show_strip.x.text = TRUE, show_strip.y.text = TRUE, 
+                                     remove.x.labels = TRUE, remove.y.labels = FALSE, switch = FALSE,
+                                     cols = vars(time), rows = vars(Class), orientation = "portrait") +
   
   scale_color_gradient2(low = 'blue', mid = 'grey75', high = 'red', midpoint = 0, limits = c(-cap, cap))+
   
@@ -1559,6 +1764,5 @@ extended_grid <- cowplot::plot_grid(my_tot_cohort_plot, my_tot_cohort_plot, my_h
 
 # save the extended grid with legible metabolite labels
 ggsave(plot = extended_grid, paste(Sys.Date(), "Hourigansk_0005_Grid_MBP_Long.svg", sep = "_"), width = 3, height = 34, units = "in")
-
 
 
