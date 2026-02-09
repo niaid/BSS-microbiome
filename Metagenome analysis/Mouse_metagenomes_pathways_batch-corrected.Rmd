@@ -1,0 +1,664 @@
+---
+title: "Mouse metagenomes BSS - function."
+author: "Lauren Krausfeldt"
+date: "2025-December-29"
+output:
+  html_document:
+    code_folding: hide
+    keep_md: yes
+    toc: true
+    toc_float: true
+    toc_depth: 6
+    theme: spacelab
+  pdf_document: default
+
+---
+
+```{=html}
+<style>
+body, p {
+  font-family: Arial;
+  text-align: justify;
+  font-size: 12pt;
+}
+</style>
+```
+```{=html}
+<style>
+caption {
+      color: black;
+      font-weight: bold;
+      text-align: justify;
+    }
+</style>
+```
+
+# Pathways
+
+
+## 1. Methods
+
+Data was evaluated with fastqc and determined to have little nextera
+transposase adapter contamination. Data was run through Nephele's QC
+pipeline (updated December 2025) for adapter trimming. Trimmed data was
+passed through WGSA2 pipeline in Nephele where it was decontaminated for human and mouse reads. 
+CPM was used in this analysis. 
+
+```{r message=FALSE, warning=FALSE, results='hide'}
+
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(stringr)
+library(phyloseq)
+library(metagMisc)
+library(vegan)
+library(tidyverse)
+library(ggpubr)
+library(ggpubr)
+library(rstatix)
+library(knitr)
+library(GUniFrac)
+library(ggrepel)
+library(MMUPHin)
+library(ggprism)
+library(ggbreak)
+library(microbial)
+library(devtools)
+library(pairwiseAdonis)
+library(RColorBrewer)
+library(scales)
+library(ggtext)
+library(pixiedust)
+library(downloadthis)
+library(kableExtra)
+library(veganEx)
+```
+
+## 2. Data processing 
+
+### Import data and create phyloseq object. 
+
+```{r warning=FALSE, message=FALSE}
+
+data<-read.csv("merged_Counts+PWY.csv", row.names=1, header=TRUE)
+
+
+taxa <- data[, c("kingdom","phylum","class","order","OTU")]
+data[, c("kingdom","phylum","class","order","OTU")] <- NULL 
+
+```
+
+
+```{r warning=FALSE, message=FALSE}
+metadata<-read.csv("metadata.csv", row.names=1, header=TRUE) 
+
+metadata$Timepoint <- factor(metadata$Timepoint,
+    levels = c('Day 0', 'Day 3'),ordered = TRUE)
+
+
+otu<-otu_table(data, taxa_are_rows=TRUE)
+meta<-sample_data(metadata)
+tax<-tax_table(as.matrix(taxa))
+phylo_raw<-phyloseq(otu, meta, tax)
+phylo_raw_df<-phyloseq_to_df(phylo_raw, addtax=F)
+rownames(phylo_raw_df)<-phylo_raw_df[,1]
+phylo_raw_df<-dplyr::select(phylo_raw_df, -c("OTU"))
+metadata<-data.frame(sample_data(phylo_raw))
+phylo_raw_df<-as.data.frame(t(phylo_raw_df))
+#pairwise.adonis2(phylo_raw_df~SequenceRun, data=metadata)
+
+phylo_raw
+
+```
+### Batch correction
+
+```{r warning=FALSE, message=FALSE}
+
+
+phylo_raw_df<-as.data.frame(t(phylo_raw_df))
+phylo_raw_df<-round(phylo_raw_df)
+fit_adjust_batch <- adjust_batch(feature_abd = phylo_raw_df,
+                                batch = "Cage..",
+                                data = metadata,
+                                control = list(verbose = FALSE))
+
+CRC_abd_adj <- fit_adjust_batch$feature_abd_adj 
+
+otu2<-otu_table(CRC_abd_adj, taxa_are_rows = TRUE)
+meta<-sample_data(metadata)
+tax<-tax_table(as.matrix(taxa))
+
+phylo_adj<-phyloseq(otu2, meta, tax)
+
+```
+
+### Filtering
+
+Filtered for prevalence (10%) and abundance (CPM of 3).
+
+```{r}
+
+
+#critical_value <- 0.00001*sum(taxa_sums(phylo_raw))
+#phylo <- filter_taxa(phylo_raw, function(x) sum(x) > critical_value, TRUE)
+#phylo
+
+phylo<-phyloseq_filter_prevalence(phylo_adj, abund.trh=3, prev.trh=0.10, abund.type="total", threshold_condition ="AND")
+phylo
+
+summary(sample_sums(phylo))
+
+phylo_df<-phyloseq_to_df(phylo, addtax=F)
+rownames(phylo_df)<-phylo_df[,1]
+phylo_df<-dplyr::select(phylo_df, -c("OTU"))
+
+```
+
+<br>
+
+
+## 3. Effectors and Interactions 
+
+Looked for possible effectors or interacting variables. Cage/experiment. 
+
+### Cage
+
+```{r}
+
+result<-adonis2(phyloseq::distance(phylo, method="bray") ~ sample_data(phylo)$Cage..)
+
+result<-result[1,c(3,5)]
+
+result$Comparison<-"Cage"
+rownames(result)<-result$Comparison
+
+kable(result[,c(1,2)], caption="Table X. PERMANOVA results for investigating differences in pathway composition.", format="html", full_width = FALSE, table.attr= "style='width:60%;'") %>% kable_styling(position="left", bootstrap_options = c("striped","hover"))
+
+```
+```{r}
+ord_filt_subject<- ordinate(phylo, "MDS", "bray")  
+all_pcoa_subject1 <- plot_ordination(phylo, ord_filt_subject, type = "site", 
+                                   color = "Cage..") + 
+  geom_point(size = 4) + theme_bw()
+
+all_pcoa_subject1
+```
+
+<br>
+
+### Experiment
+
+```{r}
+
+result<-adonis2(phyloseq::distance(phylo, method="bray") ~ sample_data(phylo)$Experiment.source)
+
+result<-result[1,c(3,5)]
+
+result$Comparison<-"Experiment"
+rownames(result)<-result$Comparison
+
+kable(result[,c(1,2)], caption="Table X. PERMANOVA results for investigating differences in pathway composition.", format="html", full_width = FALSE, table.attr= "style='width:60%;'") %>% kable_styling(position="left", bootstrap_options = c("striped","hover"))
+
+```
+
+```{r}
+
+ord_filt_subject<- ordinate(phylo, "MDS", "bray")  
+
+all_pcoa_subject1 <- plot_ordination(phylo, ord_filt_subject, type = "site", 
+                                   color = "Experiment.source") + 
+  geom_point(size = 4) + theme_bw()
+
+all_pcoa_subject1
+```
+
+
+>Notes: Cage weakly significant with pathway composition. Experiment significant. 
+
+<br> 
+
+--------
+
+## 4. Functional composition
+
+
+Differences between time point using PERMANOVA at species level.
+
+### Treatment v control
+
+#### Bray-Curtis
+
+```{r}
+
+rarefied<-as.data.frame(t(phylo_df))
+bray<-pairwise.adonis2(rarefied~Control.or.Treated, data=metadata)
+
+results_df <- do.call(rbind, bray)
+results_df <- results_df[grepl("Model", rownames(results_df)), ]
+results_df$Comparison<-rownames(results_df)
+results_df<- results_df %>% mutate(Comparison = gsub(".Model", "", Comparison))
+rownames(results_df)<-results_df$Comparison
+
+results_df<-results_df %>% mutate_at(1:5, as.numeric)
+results_df[c(1:5)] <- lapply(results_df[c(1:5)], round, digits = 3)
+
+results_df[,c(1,2,6)]<-NULL
+results_df %>% kable(caption="<strong>Table X. Differences in pathway composition using Bray-Curtis Dissimilarity.<strong>", format="html", full_width = FALSE, table.attr= "style='width:80%;'") %>% kable_styling(position="left", bootstrap_options = c("striped"))%>%
+   column_spec(4, color=ifelse(results_df[,3] < 0.05, "green","black"))
+
+
+library(downloadthis)
+results_df %>%
+  download_this(
+    output_name = "PERMANOVAresults-pathway-bray",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+
+```
+
+```{r}
+
+ord_filt_subject<- ordinate(phylo, "MDS", "bray")  
+
+all_pcoa_subject1 <- plot_ordination(phylo, ord_filt_subject, type = "site", 
+                                   color = "Control.or.Treated") + 
+  geom_point(size = 4) + theme_bw()
+
+all_pcoa_subject1
+```
+
+
+<br>
+
+#### Canberra
+
+```{r}
+can<-pairwise.adonis2(rarefied~Control.or.Treated, data=metadata, method="canberra")
+
+results_df <- do.call(rbind, can)
+results_df <- results_df[grepl("Model", rownames(results_df)), ]
+results_df$Comparison<-rownames(results_df)
+results_df<- results_df %>% mutate(Comparison = gsub(".Model", "", Comparison))
+rownames(results_df)<-results_df$Comparison
+
+results_df<-results_df %>% mutate_at(1:5, as.numeric)
+results_df[c(1:5)] <- lapply(results_df[c(1:5)], round, digits = 3)
+
+results_df[,c(1,2,6)]<-NULL
+results_df %>% kable(caption="<strong>Table X. Differences in pathway composition using Canberra Index.<strong>", format="html", full_width = FALSE, table.attr= "style='width:80%;'") %>% kable_styling(position="left", bootstrap_options = c("striped"))%>%
+   column_spec(4, color=ifelse(results_df[,3] < 0.05, "green","black"))
+
+
+library(downloadthis)
+results_df %>%
+  download_this(
+    output_name = "PERMANOVAresults-pathway-canberra",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+```
+
+
+```{r}
+
+ord_filt_subject<- ordinate(phylo, "MDS", "canberra")  
+
+all_pcoa_subject1 <- plot_ordination(phylo, ord_filt_subject, type = "site", 
+                                   color = "Control.or.Treated") + 
+  geom_point(size = 4) + theme_bw()
+
+all_pcoa_subject1
+```
+<br>
+
+
+
+<br>
+
+> Notes: Significant differences when comparing control and treated with canberra. 
+
+<br><br>
+
+
+### Time and Treatment
+
+#### Bray-Curtis
+
+Time and different controls considered. 
+
+```{r}
+can<-pairwise.adonis2(rarefied~Time_Treatment, data=metadata, method="bray")
+
+results_df <- do.call(rbind, can)
+results_df <- results_df[grepl("Model", rownames(results_df)), ]
+results_df$Comparison<-rownames(results_df)
+results_df<- results_df %>% mutate(Comparison = gsub(".Model", "", Comparison))
+rownames(results_df)<-results_df$Comparison
+
+results_df<-results_df %>% mutate_at(1:5, as.numeric)
+results_df[c(1:5)] <- lapply(results_df[c(1:5)], round, digits = 3)
+
+results_df[,c(1,2,6)]<-NULL
+results_df %>% kable(caption="<strong>Table X. Differences in pathway composition using Bray Curtis.<strong>", format="html", full_width = FALSE, table.attr= "style='width:80%;'") %>% kable_styling(position="left", bootstrap_options = c("striped"))%>%
+   column_spec(4, color=ifelse(results_df[,3] < 0.05, "green","black"))
+
+
+library(downloadthis)
+results_df %>%
+  download_this(
+    output_name = "PERMANOVAresults-pathway-canberra",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+```
+
+#### Canberra
+
+Time and different controls considered. 
+
+```{r}
+can<-pairwise.adonis2(rarefied~Time_Treatment, data=metadata, method="canberra")
+
+results_df <- do.call(rbind, can)
+results_df <- results_df[grepl("Model", rownames(results_df)), ]
+results_df$Comparison<-rownames(results_df)
+results_df<- results_df %>% mutate(Comparison = gsub(".Model", "", Comparison))
+rownames(results_df)<-results_df$Comparison
+
+results_df<-results_df %>% mutate_at(1:5, as.numeric)
+results_df[c(1:5)] <- lapply(results_df[c(1:5)], round, digits = 3)
+
+results_df[,c(1,2,6)]<-NULL
+results_df %>% kable(caption="<strong>Table X. Differences in pathway composition using Canberra Index.<strong>", format="html", full_width = FALSE, table.attr= "style='width:80%;'") %>% kable_styling(position="left", bootstrap_options = c("striped"))%>%
+   column_spec(4, color=ifelse(results_df[,3] < 0.05, "green","black"))
+
+
+library(downloadthis)
+results_df %>%
+  download_this(
+    output_name = "PERMANOVAresults-pathway-canberra",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+```
+
+
+>Notes: 
+
+<br><br>
+
+### Only Day3
+
+```{r}
+
+day3<-subset_samples(phylo, Timepoint== "Day 3")
+
+```
+
+<br><br>
+
+#### Bray-Curtis
+
+```{r}
+
+result<-adonis2(phyloseq::distance(day3, method="bray") ~ sample_data(day3)$Treatment)
+
+result<-result[1,c(3,5)]
+
+result$Comparison<-"Treatment"
+rownames(result)<-result$Comparison
+
+kable(result[,c(1,2)], caption="Table X. PERMANOVA results for investigating differences in bacterial composition.", format="html", full_width = FALSE, table.attr= "style='width:60%;'") %>% kable_styling(position="left", bootstrap_options = c("striped","hover"))
+
+```
+
+```{r}
+
+ord_filt_subject<- ordinate(day3, "MDS", "bray")  
+
+all_pcoa_subject1 <- plot_ordination(day3, ord_filt_subject, type = "site", 
+                                   color = "Treatment") + 
+  geom_point(size = 4) + theme_bw()
+
+all_pcoa_subject1
+
+
+all_pcoa_subject1 %>%
+  download_this(
+    output_name = "PCOA_bacteria_bray",
+    output_extension = ".pdf",
+    button_label = "Download figure as .pdf",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-solid fa-image",
+    ggsave_args = list(height=4, width=6)
+  )
+```
+
+<br><br>
+
+#### Canberra
+
+```{r}
+
+result<-adonis2(phyloseq::distance(day3, method="canberra") ~ sample_data(day3)$Treatment)
+
+result<-result[1,c(3,5)]
+
+result$Comparison<-"Treatment"
+rownames(result)<-result$Comparison
+
+kable(result[,c(1,2)], caption="Table X. PERMANOVA results for investigating differences in bacterial composition.", format="html", full_width = FALSE, table.attr= "style='width:60%;'") %>% kable_styling(position="left", bootstrap_options = c("striped","hover"))
+
+```
+
+```{r}
+
+ord_filt_subject<- ordinate(day3, "MDS", "canberra")  
+
+all_pcoa_subject1 <- plot_ordination(day3, ord_filt_subject, type = "site", 
+                                   color = "Treatment") + 
+  geom_point(size = 4) + theme_bw()
+
+all_pcoa_subject1
+
+
+all_pcoa_subject1 %>%
+  download_this(
+    output_name = "PCOA_bacteria_can",
+    output_extension = ".pdf",
+    button_label = "Download figure as .pdf",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-solid fa-image",
+    ggsave_args = list(height=4, width=6)
+  )
+```
+
+
+
+## 5. Differential abundance: Pathways
+
+
+### With random effects 
+
+Cage, experiment, subjectID
+
+```{r results=FALSE, message=FALSE, warning=FALSE}
+
+library(Maaslin2)
+
+
+subject_all = Maaslin2(
+  input_data = phylo_df,
+  input_metadata = metadata,
+  output = "Treated_genus",
+  fixed_effects = c('Control.or.Treated'), normalization="NONE", reference=c("Control"), random_effect=c("Subject.ID", "Experiment.source","Cage.."), analysis_method="LM", transform="LOG", plot_scatter = FALSE)
+
+LM<-subject_all$results
+
+
+## re-install maaslin2 to fix package error. Log transform with linear model? 
+
+table<-as.data.frame(LM[,c("feature","value","coef","qval","N.not.zero")])
+
+table_sub<- table %>% filter(qval < 0.20)
+table_sub2<- table_sub %>% filter(coef< -1)
+table_sub3<- table_sub %>% filter(coef > 1)
+table_sub4_day0<-rbind(table_sub2, table_sub3)
+table_sub4_day0$order<-table_sub4_day0$feature
+
+
+DAA_taxa<-merge.data.frame(table_sub4_day0, taxa, by="order", all.x=TRUE, all.y=FALSE)
+
+
+
+
+```
+
+```{r}
+
+
+
+dust(DAA_taxa) %>%
+  kable(caption = "<strong>Table X. Differentially abundant pathways in treated compared to control. Pathways are shown with a qvalue 0.2. <strong>") %>%
+  kable_styling(bootstrap_options = c("striped")) %>% column_spec(column=3, width_min="5em", include_thead = T) %>% 
+  scroll_box(width = "750px", height="650px", fixed_thead=T) 
+
+library(downloadthis)
+DAA_taxa %>%
+  download_this(
+    output_name = "Differentally abundant pathways",
+    output_extension = ".xlsx",
+    button_label = "Download results in excel",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa fa-save"
+  )
+
+```
+
+>Notes: Used qval 0.2 because there were not many differentially abundant taxa. 
+
+<br><br> 
+
+#### Barchart
+
+```{r}
+
+nb.cols<-12
+mycolors <- colorRampPalette(brewer.pal(12, "Paired"))(nb.cols)
+
+#table(DAA_taxa$phylum)
+
+#DAA_taxa$phylum<- factor(DAA_taxa$phylum,
+   # levels = c('Bacillota','Fusobacteriota','Pseudomonadota'), ordered = TRUE)
+
+DAA_taxa$order <- factor(DAA_taxa$order, levels = DAA_taxa$order[order(DAA_taxa$phylum, decreasing=TRUE)])
+
+
+#mycolors <- c("#2D82AF","#FE982C","#D9A295")
+
+DAA_taxa<- DAA_taxa %>% mutate(updated_text = gsub("_", " ", order))
+
+
+
+DAA_taxa$updated_text<- factor(DAA_taxa$updated_text, levels = DAA_taxa$updated_text[order(DAA_taxa$phylum, DAA_taxa$coef, decreasing=TRUE)])
+
+stacked_species<-ggplot(DAA_taxa, aes(x = coef, y = updated_text, fill=phylum)) +
+  geom_bar(stat = "identity",show.legend = TRUE) + xlab("Effect size") +scale_fill_manual(values=mycolors)+theme_classic()+geom_col(color="black")+theme(legend.position="right") +ylab(NULL) +guides(fill = guide_legend(nrow = 21))
+
+
+#stacked_species
+#ggexport(stacked_species, filename="Stacked_plot_species.pdf", width=6, height=9)
+
+DAA_taxa$qval_adj<--log10(DAA_taxa$qval)
+
+bubble_species<-ggplot(DAA_taxa, aes(x=value, y=updated_text, size = qval_adj)) + geom_point(alpha=1, aes(color=phylum))+scale_size(range=c(0.01,6), "-log10(p value)")+scale_color_manual(values=mycolors)+theme_void()+guides(color="none", fill="none")
+
+#bubble_species
+```
+
+<br><br>
+
+
+```{r fig.cap="**Figure X. Differentially abundant genera (effect size > 1 or <  - 1) colored by phylum after treatment compared to contols.. Significance represents -log10 of adjusted p value after multiple comparisons (< 0.20). The greater the circle the more statistically significant.**", fig.height=6, fig.width=10}
+
+figure<-stacked_species+bubble_species
+
+figure
+
+
+library(downloadthis)
+figure %>%
+  download_this(
+    output_name = "Stacked_plot_bacterial_genera",
+    output_extension = ".pdf",
+    button_label = "Download figure as .pdf",
+    button_type = "default",
+    has_icon = TRUE,
+    icon = "fa-solid fa-image",
+    ggsave_args = list(height=6, width=10)
+  )
+
+
+```
+
+
+
+
+## 6. Differential abundance: day3 
+
+```{r}
+genus_df<-phyloseq_to_df(day3, addtax=F)
+rownames(genus_df)<-genus_df[,1]
+genus_df<-dplyr::select(genus_df, -c("OTU"))
+
+```
+
+
+```{r results=FALSE, message=FALSE, warning=FALSE, cache=TRUE}
+
+library(Maaslin2)
+
+subject_all = Maaslin2(
+  input_data = genus_df,
+  input_metadata = metadata,
+  output = "Treated_genus_rarefied",
+  fixed_effects = c('Treatment'), normalization="NONE", random_effect=c("Experiment.source","Cage.."), analysis_method="LM", transform="LOG", plot_scatter = FALSE)
+
+LM<-subject_all$results
+
+
+## re-install maaslin2 to fix package error. Log transform with linear model? 
+
+table<-as.data.frame(LM[,c("feature","value","coef","qval","N.not.zero")])
+
+table_sub<- table %>% filter(qval < 0.20)
+table_sub2<- table_sub %>% filter(coef< -1)
+table_sub3<- table_sub %>% filter(coef > 1)
+table_sub4_day0<-rbind(table_sub2, table_sub3)
+
+
+```
+
+
+>Notes: no differentially abundant taxa even with qvalue of 0.2. 
+
+
+<br><br>
