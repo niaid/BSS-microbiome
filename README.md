@@ -3,6 +3,7 @@
 ## Authors
 
 Metagenomics code by Lauren Krausfeldt, BCBB/OCICB/OSMO/OD/NIAID/NIH
+
 Metabolomics code by Ian LaCroix, PCS/RTB/DIR/NIAID/NIH
 
 ## Description
