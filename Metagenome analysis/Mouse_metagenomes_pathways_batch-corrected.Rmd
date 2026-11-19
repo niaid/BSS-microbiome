@@ -82,6 +82,11 @@ library(veganEx)
 
 ```{r warning=FALSE, message=FALSE}
 
+## The input data is formatted such that the first column contains rows of pathways, followed by columns "kingdom","phylum","class","order","OTU" to be used for taxonomy in phyloseq object. OTU is in this case is pathway. 
+## Example :  kingdom: Genetic_Information_Processing; phylum: Folding,_sorting_and_degradation; class: Proteasome; order:	Proteasome; OTU:	Proteasome
+## The remaining columns are sampleIDs containing counts or abundances of each pathway
+
+
 data<-read.csv("merged_Counts+PWY.csv", row.names=1, header=TRUE)
 
 
@@ -92,11 +97,13 @@ data[, c("kingdom","phylum","class","order","OTU")] <- NULL
 
 
 ```{r warning=FALSE, message=FALSE}
+
+## The first column in the metadata contains rows of sample IDs that correspond to the samples in the input data. Each subsequent column is a different piece of metadata.
+
 metadata<-read.csv("metadata.csv", row.names=1, header=TRUE) 
 
 metadata$Timepoint <- factor(metadata$Timepoint,
     levels = c('Day 0', 'Day 3'),ordered = TRUE)
-
 
 otu<-otu_table(data, taxa_are_rows=TRUE)
 meta<-sample_data(metadata)
