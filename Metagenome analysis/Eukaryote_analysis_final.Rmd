@@ -80,6 +80,8 @@ Examine raw data and make phyloseq object.
 
 ```{r warning=FALSE, message=FALSE}
 
+## The input data is formatted such that the first column contains rows of species, followed by columns "kingdom","phylum","class","order","family","genus","species","OTU" to be used for taxonomy in phyloseq object. OTU is in this case is species. 
+
 data<-read.csv("Tax_euks.csv", row.names=1, header=TRUE)
 
 
@@ -89,6 +91,9 @@ data[, c("kingdom","phylum","class","order","family","genus","species","OTU","AT
 ```
 
 ```{r warning=FALSE, message=FALSE}
+
+## The first column in the metadata contains rows of sample IDs that correspond to the samples in the input data. Each subsequent column is a different piece of metadata.
+
 metadata<-read.csv("BSS_metadata update10FEB2025.csv", row.names=1, header=TRUE)
 metadata<-as.data.frame(t(metadata))
 metadata[, c("ATCCMSA2002control_P1","ATCCMSA2002control_P2","NegativeControl","NegativeControl_P2")] <- NULL
@@ -120,7 +125,6 @@ hist(log10(taxa_sums(phylo_raw)))
 
 ### Filtering
 
-Filtered for prevalence (10%) and abundance (count of 10) instead of critical value to increase number of taxa analyzed. Both must be true to pass filter. 
 
 ```{r}
 
@@ -295,10 +299,6 @@ results_df %>%
 
 ```
 
-<br>
-
-> **Notes:**: Differences in composition between day2 and baseline, day0, day8, day14, with BrayCurtis dissimilarity and jaccard, all time points with canberra distance. 
-
 <br><br>
 
 
@@ -422,10 +422,6 @@ results_df %>%
 ```
 
 <br><br> 
-
->Notes: Differences also observed a genus level for day2. 
-
-<br>
 
 ----------
 
