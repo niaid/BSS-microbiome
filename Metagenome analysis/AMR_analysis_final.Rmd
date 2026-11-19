@@ -35,8 +35,6 @@ caption {
 
 # AMR genes
 
-v2: updated stacked bar chart with appropriate bubble sizes. 
-
 ## 1. Methods
 
 Data was evaluated with fastqc and determined to have nextera transposase adapter contamination. Data was run through Nephele's QC pipeline for adapter trimming. Trimmed data was passed through WGSA2 pipeline in Nephele where it was decontaminated for human reads. AMR detection was performed on assemblies using AMR-Finder as a part of the WGSA2 pipeline. CPM (equivalent to TPM) of AMR genes were used in this analysis. 
@@ -82,6 +80,11 @@ Created phyloseq object.
 
 ```{r warning=FALSE, message=FALSE}
 
+## Input data "Final_AMR_table.csv" is formatted with the first column contains the AMR gene (in this case accession number)
+## The remaining columns are samples with abundance of each AMR gene. 
+## "taxa" in this case are the different classifications of each gene for the phyloseq object. This was provided as a part of AMR-Finder output.
+## Example: kingdom: ARSENIC;	phylum: ARSENITE;	class: arsD	order: arsenite efflux transporter metallochaperone ArsD;	family arsD_arsenite efflux transporter metallochaperone ArsD; OTU: AAA21094_1
+
 data<-read.csv("Final_AMR_table.csv", row.names=1, header=TRUE)
 
 taxa <- data[, c("kingdom","phylum","class","order","family","OTU")]
@@ -93,8 +96,14 @@ data[, c("kingdom","phylum","class","order","OTU","family")] <- NULL
 
 
 ```{r warning=FALSE, message=FALSE}
+
+## The first column in the metadata contains rows of sample IDs that correspond to the samples in the input data. Each subsequent column is a different piece of metadata. 
+
+
 metadata<-read.csv("BSS_metadata update10FEB2025.csv", row.names=1, header=TRUE)
 metadata<-as.data.frame(t(metadata))
+
+# Removed positive controls for final analysis 
 metadata[, c("ATCCMSA2002control_P1","ATCCMSA2002control_P2","NegativeControl","NegativeControl_P2")] <- NULL
 metadata<-as.data.frame(t(metadata))
 
@@ -298,11 +307,6 @@ results_df %>%
 
 
 ```
-
-
-<br> 
-
-> **Notes:** Differences in composition between day2 and baseline, day0, day8, day14, and day28 with Bray-Curtis dissimilarity, Canberra distance and Jaccard Index. 
 
 <br><br>
 
