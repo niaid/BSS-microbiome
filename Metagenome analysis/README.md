@@ -35,7 +35,7 @@ R notebook containing code for data processing and statistical analysis of diffe
 
 R notebook containing code for data processing and statistical analysis of differential abundance of genera for day 0 compared to day 2 after dosing in both high and low responders, as well as genera that are differentially abundant at day 8, 14, and 28 in responders. Raw figures related to these anaylses are also generated for manuscript. Figures were finalized (fonts, size, organization of panels) in Adobe Illustrator. 
 
-### Mouse_metagenomes_pathways_batch-corrected.Rmd
+### Mouse_metagenomes_pathways_batch-corrected_final.Rmd
 
 R notebook containing code for data processing and statistical analysis of compositional analysis and differential abundance for functional pathways in mouse metagenomes. 
 
