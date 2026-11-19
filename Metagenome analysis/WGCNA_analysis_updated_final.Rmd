@@ -81,7 +81,16 @@ library(magrittr)
 Rarefied data was imported and a phyloseq object was a created. Taxa were summed at the genus level for clustering analysis. 
  
 ```{r warning=FALSE, message=FALSE}
+
+
+## The input data is formatted such that the first column contains rows of species, followed by columns "kingdom","phylum","class","order","family","genus","species","OTU" to be used for taxonomy in phyloseq object. OTU is in this case is species. 
+
+## The remaining columns are sampleIDs containings counts or abundances of each species. 
+
 data<-read.csv("rarefied_bacterial_table_not_batch_filtered_prev.csv", row.names=1, header=TRUE)
+
+
+## The first column in the metadata contains rows of sample IDs that correspond to the samples in the input data. Each subsequent column is a different piece of metadata.
 
 metadata<-read.csv("BSS_metadata update10FEB2025.csv", row.names=1, header=TRUE)
 metadata<-as.data.frame(t(metadata))
