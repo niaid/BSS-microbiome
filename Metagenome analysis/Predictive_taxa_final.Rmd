@@ -55,9 +55,15 @@ library(pROC)
 
 # 2. ROC analysis: class
 
+ROC code provided by Ian LaCroix and adapted to suit microbiome data. 
+
 ## Data pre-processing 
 
 ```{r}
+
+## The input data is formatted such that the first column has rows sequentially numbered, followed by columns containing the taxonomic ranks for/from phyloseq objects. 
+## For example: 1;	OTU: Bacteroides_sp; kingdom: Bacteria; phylum: Bacteroidota; class:	Bacteroidia; order:	Bacteroidales; family: Bacteroidaceae; genus:	Bacteroides; species:	NA
+## the remaining columns are sampleIDs which contain the normalized abundance of each genera 
 
 data<-read.csv("Genus_counts_normalized.csv", row.names=1, header=TRUE)
 data[, c("order","family","genus","species","OTU","ATCCMSA2002control_P1",
@@ -75,6 +81,7 @@ data[,c("class")]<-NULL
 data<-as.data.frame(t(data))
 data$Sample<-row.names(data)
 
+## The first column in the metadata contains rows of sample IDs that correspond to the samples in the input data. Each subsequent column is a different piece of metadata.
 
 metadata<-read.csv("BSS_metadata update10FEB2025.csv", row.names=1, header=TRUE)
 
