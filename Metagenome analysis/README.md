@@ -1,7 +1,7 @@
 ## Metagenome analysis
 
-This directory contains all scripts and code used to analyze the metagenomes and make raw figures for Band et al. (2026). 
-
+This directory contains all scripts and code used to analyze the metagenomes and make raw figures for Band et al (202X). 
+Formatting for the inputs for code can be found within each notebook. 
 
 ### AMR_analysis_final.Rmd
 
