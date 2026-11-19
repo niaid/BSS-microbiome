@@ -73,7 +73,13 @@ Data was evaluated with fastqc and determined to have nextera transposase adapte
 
 ```{r warning=FALSE, message=FALSE}
 
+## The input data is formatted such that the first column contains rows of vOTUs.
+
+## The remaining columns are sampleIDs containings counts or abundances of each vOTU. 
+
 data<-read.csv("vOTU_table_cpm.csv", row.names=1, header=TRUE)
+
+## The first column in the metadata contains rows of sample IDs that correspond to the samples in the input data. Each subsequent column is a different piece of metadata.
 
 metadata<-read.csv("BSS_metadata update10FEB2025.csv", row.names=1, header=TRUE)
 metadata<-as.data.frame(t(metadata))
@@ -296,6 +302,10 @@ alpha_Timepoint %>%
 Import data and create phyloseq.
 
 ```{r warning=FALSE, message=FALSE}
+
+## The input data is formatted such that the first column contains rows of host genera, followed by columns "kingdom","phylum","class","order","family","genus","OTU" to be used for taxonomy in phyloseq object. OTU is in this case is genus. 
+
+## The remaining columns are sampleIDs containings counts or abundances of each host genera. 
 
 data<-read.csv("Host_cpm.csv")
 
